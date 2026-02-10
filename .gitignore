@@ -1,0 +1,12 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Credentials (DO NOT UPLOAD)
+credentials.json
+
+# OS files
+.DS_Store
+Thumbs.db
