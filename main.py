@@ -4,12 +4,17 @@ from discord.ext import commands
 import gspread
 from google.oauth2.service_account import Credentials
 import aiohttp
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
 SPREADSHEET_ID   = '1fUkh8LhRhRqQq9MjlgzM4bI2sIhbkvmTrMYFehqNJMs'
-DISCORD_TOKEN    = 'MTQ3MDgxNzg4NzAxMzk2NjAwMQ.G3G8rz.DG0QOdwKDWPNEjCk-DxX0KH81OFq8YBtP9l2P8'
+DISCORD_TOKEN    = os.getenv('DISCORD_TOKEN')  # ← Load from .env
 CREDENTIALS_FILE = 'credentials.json'
 
 # ── Apps Script Web App URL (handles writing to the Edit Staff sheet) ──
