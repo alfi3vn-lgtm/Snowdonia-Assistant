@@ -1914,11 +1914,6 @@ async def run_bot():
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
 
-        finally:
-            if not bot.is_closed():
-                await bot.close()
-
-
 if __name__ == '__main__':
     keep_alive()
 
@@ -1934,3 +1929,4 @@ if __name__ == '__main__':
             if task_obj.is_running():
                 task_obj.cancel()
         loop.close()
+
