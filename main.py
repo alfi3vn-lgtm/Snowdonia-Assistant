@@ -1891,8 +1891,7 @@ async def run_bot():
         attempt += 1
         try:
             print(f"[Startup] Login attempt {attempt}…", flush=True)
-            async with bot:
-                await bot.start(DISCORD_TOKEN)
+            await bot.start(DISCORD_TOKEN)
 
         except discord.errors.HTTPException as e:
             if e.status == 429:
@@ -1914,6 +1913,11 @@ async def run_bot():
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
 
+        finally:
+            if bot.is_closed():
+                bot._closed = False
+                bot.clear()
+
 
 if __name__ == '__main__':
     import sys
@@ -1934,4 +1938,5 @@ if __name__ == '__main__':
         print(f"[FATAL] Bot crashed: {e}", flush=True)
     finally:
         loop.close()
+
 
