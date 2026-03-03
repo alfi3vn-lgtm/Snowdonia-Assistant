@@ -1914,19 +1914,24 @@ async def run_bot():
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
 
+
 if __name__ == '__main__':
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
+
+    print("[DEBUG] Script started", flush=True)
+    print(f"[DEBUG] DISCORD_TOKEN present: {bool(DISCORD_TOKEN)}", flush=True)
+
     keep_alive()
 
-    # Cancel tasks cleanly on shutdown
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(run_bot())
     except KeyboardInterrupt:
         print("\nBot shutting down…")
+    except Exception as e:
+        print(f"[FATAL] Bot crashed: {e}", flush=True)
     finally:
-        for task_obj in (self_ping_task, timetable_post_task, timetable_reminder_task):
-            if task_obj.is_running():
-                task_obj.cancel()
         loop.close()
 
