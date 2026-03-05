@@ -193,8 +193,8 @@ APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwiKn7Xo_nGyfRvtH3z8L
 SELF_PING_INTERVAL = 300
 SELF_PING_CHANNEL_ID = os.getenv('SELF_PING_CHANNEL_ID')
 
-ACADEMY_TIMETABLE_CHANNEL_ID      = 1459545944856072223
-SIXTH_FORM_TIMETABLE_CHANNEL_ID   = 1459544919805919359
+ACADEMY_TIMETABLE_CHANNEL_ID      = 0
+SIXTH_FORM_TIMETABLE_CHANNEL_ID   = 0
 ACADEMY_STAFF_ROLE_ID             = 1438203308178145310
 SIXTH_FORM_STAFF_ROLE_ID          = 1459540584414052373
 TIMETABLE_POST_TIME               = "21:15"
@@ -1567,7 +1567,7 @@ async def profile(interaction: discord.Interaction):
 async def mark_attendance(interaction: discord.Interaction, staff_name: str):
     await interaction.response.defer()
 
-    params = {"action": "edit", "staffName": staff_name, "field": "attendance", "cell": "K6", "value": "1"}
+    params = {"action": "attendance", "staffName": staff_name}
 
     try:
         status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
@@ -1794,10 +1794,10 @@ async def set_status(interaction: discord.Interaction, status_text: str, status_
 async def slash_ping(interaction: discord.Interaction):
     await interaction.response.send_message(f'Pong! Latency: {round(bot.latency * 1000)}ms')
 
-@bot.tree.command(name="pong", description="Responds with Ping")
+@bot.tree.command(name="mia", description="Responds with Ping")
 @cooldown()
 async def slash_pong(interaction: discord.Interaction):
-    await interaction.response.send_message('Ping!')
+    await interaction.response.send_message('die')
 
 
 # -------------------------------------------------
@@ -1891,7 +1891,8 @@ async def run_bot():
         attempt += 1
         try:
             print(f"[Startup] Login attempt {attempt}…", flush=True)
-            await bot.start(DISCORD_TOKEN)
+            async with bot:
+                await bot.start(DISCORD_TOKEN)
 
         except discord.errors.HTTPException as e:
             if e.status == 429:
@@ -1913,30 +1914,19 @@ async def run_bot():
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
 
-        finally:
-            if bot.is_closed():
-                bot._closed = False
-                bot.clear()
-
 
 if __name__ == '__main__':
-    import sys
-    sys.stdout.reconfigure(line_buffering=True)
-
-    print("[DEBUG] Script started", flush=True)
-    print(f"[DEBUG] DISCORD_TOKEN present: {bool(DISCORD_TOKEN)}", flush=True)
-
     keep_alive()
 
+    # Cancel tasks cleanly on shutdown
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(run_bot())
     except KeyboardInterrupt:
         print("\nBot shutting down…")
-    except Exception as e:
-        print(f"[FATAL] Bot crashed: {e}", flush=True)
     finally:
+        for task_obj in (self_ping_task, timetable_post_task, timetable_reminder_task):
+            if task_obj.is_running():
+                task_obj.cancel()
         loop.close()
-
-
