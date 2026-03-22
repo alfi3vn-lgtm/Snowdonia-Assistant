@@ -35,6 +35,7 @@ def keep_alive():
 
 load_dotenv()
 
+
 # -------------------------------------------------
 #  RATE LIMITING
 # -------------------------------------------------
@@ -101,6 +102,17 @@ def cooldown(command_name: str | None = None):
 # -------------------------------------------------
 _http_semaphore = asyncio.Semaphore(3)
 
+# FIX #3: shared aiohttp session created once at startup instead of
+# opening a new ClientSession on every single HTTP call.
+_http_session: aiohttp.ClientSession | None = None
+
+async def get_http_session() -> aiohttp.ClientSession:
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession()
+    return _http_session
+
+
 async def safe_apps_script_get(
     url: str,
     params: dict,
@@ -114,28 +126,28 @@ async def safe_apps_script_get(
     async with _http_semaphore:
         for attempt in range(retries):
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        url, params=params, allow_redirects=True,
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    ) as resp:
-                        last_status = resp.status
-                        last_text = await resp.text()
+                session = await get_http_session()
+                async with session.get(
+                    url, params=params, allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    last_status = resp.status
+                    last_text = await resp.text()
 
-                        if last_status == 429:
-                            wait = float(resp.headers.get("Retry-After", delay))
-                            print(f"[HTTP] 429 rate-limited (attempt {attempt+1}). Waiting {wait:.1f}s…")
-                            await asyncio.sleep(wait)
-                            delay *= 2
-                            continue
+                    if last_status == 429:
+                        wait = float(resp.headers.get("Retry-After", delay))
+                        print(f"[HTTP] 429 rate-limited (attempt {attempt+1}). Waiting {wait:.1f}s…")
+                        await asyncio.sleep(wait)
+                        delay *= 2
+                        continue
 
-                        if last_status >= 500:
-                            print(f"[HTTP] {last_status} server error (attempt {attempt+1}). Retrying in {delay:.1f}s…")
-                            await asyncio.sleep(delay)
-                            delay *= 2
-                            continue
+                    if last_status >= 500:
+                        print(f"[HTTP] {last_status} server error (attempt {attempt+1}). Retrying in {delay:.1f}s…")
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
 
-                        return last_status, last_text
+                    return last_status, last_text
 
             except aiohttp.ClientError as exc:
                 print(f"[HTTP] Network error (attempt {attempt+1}): {exc}")
@@ -267,6 +279,9 @@ FIELD_MAP = {
     "discord_id":      ("Discord User ID",  "I6"),
 }
 
+print("Starting bot...", flush=True)
+print(f"Token present: {bool(DISCORD_TOKEN)}", flush=True)
+print(f"Google credentials present: {bool(os.getenv('GOOGLE_CREDENTIALS'))}", flush=True)
 # -------------------------------------------------
 #  BOT SETUP
 # -------------------------------------------------
@@ -314,10 +329,15 @@ def setup_google_sheets():
     global sheets_client, spreadsheet
     try:
         credentials_json = os.getenv("GOOGLE_CREDENTIALS")
-        if not credentials_json:
-            raise ValueError("GOOGLE_CREDENTIALS environment variable not set")
-        creds_dict = json.loads(credentials_json)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        if credentials_json:
+            # Used on hosted platforms (Render, Railway, etc.)
+            creds_dict = json.loads(credentials_json)
+            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        else:
+            # Used locally — load from credentials.json file
+            print("GOOGLE_CREDENTIALS env var not set, falling back to credentials.json file")
+            creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+        
         sheets_client = gspread.authorize(creds)
         spreadsheet   = sheets_client.open_by_key(SPREADSHEET_ID)
         print("Connected to Google Sheets!")
@@ -522,18 +542,30 @@ async def on_ready():
     print(f'{bot.user} connected to Discord!')
     print(f'In {len(bot.guilds)} server(s)')
     setup_google_sheets()
-    refresh_staff_names_cache()
+
+    # FIX #2: run the initial cache refresh through the executor so it
+    # doesn't block the event loop, and guard it so it only fires once
+    # rather than on every reconnect (which hammers the Sheets API).
+    if not hasattr(bot, '_cache_loaded'):
+        bot._cache_loaded = True
+        asyncio.get_event_loop().run_in_executor(None, refresh_staff_names_cache)
 
     last_ping_time    = datetime.now()
     last_ping_latency = round(bot.latency * 1000)
 
-    await bot.change_presence(activity=discord.CustomActivity(name="im doing as im told cuz i dont wanna be fired"))
+    await bot.change_presence(activity=discord.CustomActivity(name="Heathfield Secondary School's Assistant. Run /hello to try me out!"))
 
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash command(s)")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
+    # FIX #1: only sync commands once per process lifetime, not on every
+    # reconnect. Discord heavily rate-limits tree.sync() calls.
+    if not hasattr(bot, '_synced'):
+        bot._synced = True
+        try:
+            synced = await bot.tree.sync()
+            print(f"Synced {len(synced)} slash command(s)")
+        except Exception as e:
+            print(f"Failed to sync commands: {e}")
+    else:
+        print("Reconnected — skipping command sync (already synced this session)")
 
     if not self_ping_task.is_running():
         self_ping_task.start()
@@ -594,8 +626,9 @@ async def edit_staff_autocomplete(interaction: discord.Interaction, current: str
 
 async def position_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     try:
-        worksheet = spreadsheet.worksheet(ROLES_LIST_SHEET)
-        all_data  = worksheet.get_all_values()
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(ROLES_LIST_SHEET).get_all_values()
+        )
         roles = []
         for row in all_data:
             for cell in row:
@@ -631,15 +664,15 @@ async def edit_value_autocomplete(interaction: discord.Interaction, current: str
 # -------------------------------------------------
 async def get_roblox_user_id(username: str) -> int | None:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://users.roblox.com/v1/usernames/users",
-                json={"usernames": [username], "excludeBannedUsers": False}
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("data"):
-                        return data["data"][0]["id"]
+        session = await get_http_session()
+        async with session.post(
+            "https://users.roblox.com/v1/usernames/users",
+            json={"usernames": [username], "excludeBannedUsers": False}
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data.get("data"):
+                    return data["data"][0]["id"]
     except Exception as e:
         print(f"[Roblox] User ID lookup error: {e}")
     return None
@@ -650,13 +683,13 @@ async def get_group_role_id(role_name: str) -> int | None:
     if not roblox_role_name:
         return None
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles") as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    for role in data.get("roles", []):
-                        if role["name"].lower() == roblox_role_name.lower():
-                            return role["id"]
+        session = await get_http_session()
+        async with session.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles") as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                for role in data.get("roles", []):
+                    if role["name"].lower() == roblox_role_name.lower():
+                        return role["id"]
     except Exception as e:
         print(f"[Roblox] Role ID lookup error: {e}")
     return None
@@ -664,16 +697,16 @@ async def get_group_role_id(role_name: str) -> int | None:
 
 async def get_rank_1_role_id() -> int | None:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles") as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    roles = data.get("roles", [])
-                    rank_1 = next((r for r in roles if r["rank"] == 1), None)
-                    if rank_1:
-                        return rank_1["id"]
-                    if roles:
-                        return sorted(roles, key=lambda r: r["rank"])[0]["id"]
+        session = await get_http_session()
+        async with session.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles") as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                roles = data.get("roles", [])
+                rank_1 = next((r for r in roles if r["rank"] == 1), None)
+                if rank_1:
+                    return rank_1["id"]
+                if roles:
+                    return sorted(roles, key=lambda r: r["rank"])[0]["id"]
     except Exception as e:
         print(f"[Roblox] Rank 1 role ID error: {e}")
     return None
@@ -685,26 +718,26 @@ async def set_user_group_role(roblox_user_id: int, role_id: int) -> tuple[bool, 
     try:
         cookie = ROBLOX_COOKIE.strip()
         cookie_header = {"Cookie": f".ROBLOSECURITY={cookie}"}
-        async with aiohttp.ClientSession() as session:
-            async with session.patch(
-                f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{roblox_user_id}",
-                json={"roleId": role_id},
-                headers={**cookie_header, "Content-Type": "application/json"}
-            ) as first_resp:
-                csrf = first_resp.headers.get("x-csrf-token", "").strip()
-                if first_resp.status == 200:
-                    return True, ""
-            if not csrf:
-                return False, "Roblox did not return a CSRF token"
-            async with session.patch(
-                f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{roblox_user_id}",
-                json={"roleId": role_id},
-                headers={**cookie_header, "Content-Type": "application/json", "X-CSRF-TOKEN": csrf}
-            ) as resp:
-                if resp.status == 200:
-                    return True, ""
-                text = await resp.text()
-                return False, f"HTTP {resp.status}: {text[:200]}"
+        session = await get_http_session()
+        async with session.patch(
+            f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{roblox_user_id}",
+            json={"roleId": role_id},
+            headers={**cookie_header, "Content-Type": "application/json"}
+        ) as first_resp:
+            csrf = first_resp.headers.get("x-csrf-token", "").strip()
+            if first_resp.status == 200:
+                return True, ""
+        if not csrf:
+            return False, "Roblox did not return a CSRF token"
+        async with session.patch(
+            f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{roblox_user_id}",
+            json={"roleId": role_id},
+            headers={**cookie_header, "Content-Type": "application/json", "X-CSRF-TOKEN": csrf}
+        ) as resp:
+            if resp.status == 200:
+                return True, ""
+            text = await resp.text()
+            return False, f"HTTP {resp.status}: {text[:200]}"
     except Exception as e:
         return False, str(e)
 
@@ -1794,10 +1827,10 @@ async def set_status(interaction: discord.Interaction, status_text: str, status_
 async def slash_ping(interaction: discord.Interaction):
     await interaction.response.send_message(f'Pong! Latency: {round(bot.latency * 1000)}ms')
 
-@bot.tree.command(name="mia", description="Responds with Ping")
+@bot.tree.command(name="hello", description="Responds with Ping")
 @cooldown()
 async def slash_pong(interaction: discord.Interaction):
-    await interaction.response.send_message('die')
+    await interaction.response.send_message('Goodbye')
 
 
 # -------------------------------------------------
@@ -1918,15 +1951,11 @@ async def run_bot():
 if __name__ == '__main__':
     keep_alive()
 
-    # Cancel tasks cleanly on shutdown
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    async def main():
+        async with bot:
+            await bot.start(DISCORD_TOKEN)
+
     try:
-        loop.run_until_complete(run_bot())
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\nBot shutting down…")
-    finally:
-        for task_obj in (self_ping_task, timetable_post_task, timetable_reminder_task):
-            if task_obj.is_running():
-                task_obj.cancel()
-        loop.close()
