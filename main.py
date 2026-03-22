@@ -553,7 +553,7 @@ async def on_ready():
     last_ping_time    = datetime.now()
     last_ping_latency = round(bot.latency * 1000)
 
-    await bot.change_presence(activity=discord.CustomActivity(name="Heathfield Secondary School's Assistant. Run /hello to try me out!"))
+    await bot.change_presence(activity=discord.CustomActivity(name="Winstree Academy's Assistant. Run /hello to try me out!"))
 
     # FIX #1: only sync commands once per process lifetime, not on every
     # reconnect. Discord heavily rate-limits tree.sync() calls.
