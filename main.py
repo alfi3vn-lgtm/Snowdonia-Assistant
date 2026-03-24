@@ -215,7 +215,7 @@ YEAR_LEADER_ROLE_ID               = 0
 TIMETABLE_ADMIN_ROLE_ID           = 1438202314476228678
 
 ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
-ROBLOX_GROUP_ID = "32528351"
+ROBLOX_GROUP_ID = "779411059"
 
 ROLE_NAME_MAP = {
     "School Staff":                               "Teaching Staff",
