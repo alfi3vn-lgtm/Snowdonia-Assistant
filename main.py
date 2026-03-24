@@ -66,6 +66,7 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "pong":                  3,
     "setstatus":            10,
     "diagnoseroblox":       30,
+    "openroles": 10,
 }
 
 def cooldown(command_name: str | None = None):
@@ -217,18 +218,7 @@ ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
 ROBLOX_GROUP_ID = "32528351"
 
 ROLE_NAME_MAP = {
-    "Academy Staff":                               "Academy Staff",
-    "Sixth Form Staff":                            "Sixth Form Staff",
-    "Academy Learning Manager":                    "Learning Manager",
-    "Sixth Form Learning Manager":                 "Learning Manager",
-    "Academy Pastoral Manager":                    "Pastoral Manager",
-    "Sixth Form Pastoral Manager":                 "Pastoral Manager",
-    "Assistant Head of Year 7":                    "Assistant Head of Year",
-    "Assistant Head of Year 8":                    "Assistant Head of Year",
-    "Assistant Head of Year 9":                    "Assistant Head of Year",
-    "Assistant Head of Year 10":                   "Assistant Head of Year",
-    "Assistant Head of Year 11":                   "Assistant Head of Year",
-    "Assistant Head of Sixth Form":                "Assistant Head of Year",
+    "School Staff":                               "Teaching Staff",
     "Deputy Head of Year 7":                       "Deputy Head of Year",
     "Deputy Head of Year 8":                       "Deputy Head of Year",
     "Deputy Head of Year 9":                       "Deputy Head of Year",
@@ -241,16 +231,24 @@ ROLE_NAME_MAP = {
     "Head of Year 10":                             "Head of Year",
     "Head of Year 11":                             "Head of Year",
     "Head of Sixth Form":                          "Head of Year",
-    "Academy Deputy Additional Needs Coordinator": "Deputy Additional Needs Coordinator",
-    "Sixth Form Deputy Additional Needs Coordinator": "Deputy Additional Needs Coordinator",
-    "Academy Additional Needs Coordinator":        "Additional Needs Coordinator",
-    "Sixth Form Additional Needs Coordinator":     "Additional Needs Coordinator",
-    "Premises Staff":                              "Premises Staff",
+    "Deputy Head of Lower Level":                  "Deputy Head of Level,
+    "Deputy Head of Middle Level":                  "Deputy Head of Level,
+    "Deputy Head of Upper Level":                  "Deputy Head of Level,
+    "Head of Lower Level":                         "Head of Level",
+    "Head of Middle Level":                        "Head of Level",
+    "Head of Upper Level":                         "Head of Level",
+    "Site Staff":                                  "Site Staff",
+    "Site Executive":                              "Site Operations Executive",
     "Assistant Headteacher":                       "Assistant Headteacher",
     "Deputy Headteacher":                          "Deputy Headteacher",
-    "Senior Deputy Headteacher":                   "Senior Deputy Headteacher",
     "Headteacher":                                 "Headteacher",
     "Executive Headteacher":                       "Executive Headteacher",
+    "Chief Education Officer":                     "Chief Education Officer",
+}
+
+# Roles with unlimited openings — everything else has exactly 1 spot
+INFINITE_ROLES = {
+    "School Staff"
 }
 
 ALL_STAFF_SHEET     = "All Staff"
@@ -1082,7 +1080,113 @@ async def post_sixth_form_timetable(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
+# -------------------------------------------------
+#  /openroles
+# -------------------------------------------------
+@bot.tree.command(name="openroles", description="View which staff roles are open or filled")
+@cooldown()
+async def open_roles(interaction: discord.Interaction):
+    await interaction.response.defer()
 
+    try:
+        # Fetch every role from the Roles List sheet
+        roles_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(ROLES_LIST_SHEET).get_all_values()
+        )
+
+        all_roles = []
+        for row in roles_data:
+            for cell in row:
+                cell = cell.strip()
+                if cell and cell not in all_roles:
+                    all_roles.append(cell)
+
+        if not all_roles:
+            await interaction.followup.send("❌ No roles found in the Roles List sheet.")
+            return
+
+        # Fetch current staff to count how many people hold each role
+        current_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+
+        role_counts: dict[str, int] = {}
+        for row in current_data[CURRENT_STAFF_DATA_START - 1:]:
+            if len(row) > 1:
+                role = row[1].strip()   # Column B = Role
+                if role:
+                    role_counts[role] = role_counts.get(role, 0) + 1
+
+        # Split roles into three buckets
+        infinite_roles:   list[str] = []
+        singleton_open:   list[str] = []
+        singleton_filled: list[str] = []
+
+        for role in all_roles:
+            if role in INFINITE_ROLES:
+                infinite_roles.append(role)
+            elif role_counts.get(role, 0) == 0:
+                singleton_open.append(role)
+            else:
+                singleton_filled.append(role)
+
+        # ---- Build embed ----
+        embed = discord.Embed(
+            title="📋 Staff Role Openings",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(),
+        )
+
+        if singleton_open:
+            # Chunk into ≤1024-char fields if there are many roles
+            chunk, chunks = "", []
+            for role in singleton_open:
+                line = f"• {role}\n"
+                if len(chunk) + len(line) > 1000:
+                    chunks.append(chunk.strip())
+                    chunk = ""
+                chunk += line
+            if chunk:
+                chunks.append(chunk.strip())
+
+            for i, c in enumerate(chunks):
+                label = f"✅ Open Positions ({len(singleton_open)})" if i == 0 else "✅ Open Positions (cont.)"
+                embed.add_field(name=label, value=c, inline=False)
+        else:
+            embed.add_field(name="✅ Open Positions", value="*All positions are currently filled.*", inline=False)
+
+        if infinite_roles:
+            embed.add_field(
+                name="♾️ Always Hiring (Unlimited Spots)",
+                value="\n".join(f"• {r}" for r in infinite_roles),
+                inline=False,
+            )
+
+        if singleton_filled:
+            chunk, chunks = "", []
+            for role in singleton_filled:
+                line = f"• {role}\n"
+                if len(chunk) + len(line) > 1000:
+                    chunks.append(chunk.strip())
+                    chunk = ""
+                chunk += line
+            if chunk:
+                chunks.append(chunk.strip())
+
+            for i, c in enumerate(chunks):
+                label = f"❌ Filled Positions ({len(singleton_filled)})" if i == 0 else "❌ Filled Positions (cont.)"
+                embed.add_field(name=label, value=c, inline=False)
+
+        embed.set_footer(
+            text=f"{len(singleton_open)} open · {len(singleton_filled)} filled · "
+                 f"{len(infinite_roles)} unlimited"
+        )
+        await interaction.followup.send(embed=embed)
+
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send(f"❌ Sheet '{ROLES_LIST_SHEET}' not found!")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Unexpected error: {e}")
 # -------------------------------------------------
 #  /status
 # -------------------------------------------------
