@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 import gspread
 from google.oauth2.service_account import Credentials
 import aiohttp
+import requests
 import os
 from dotenv import load_dotenv
 import asyncio
@@ -63,14 +64,14 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "checkattendance":      10,
     "status":                5,
     "ping":                  3,
-    "pong":                  3,
+    "hello":                 3,
     "setstatus":            10,
     "diagnoseroblox":       30,
-    "openroles": 10,
+    "openroles":            10,
 }
 
 def cooldown(command_name: str | None = None):
-    """Decorator — blocks reuse until cooldown expires. Place directly below @bot.tree.command."""
+    """Decorator — blocks reuse until cooldown expires."""
     def decorator(func):
         cmd_name = command_name
 
@@ -103,8 +104,6 @@ def cooldown(command_name: str | None = None):
 # -------------------------------------------------
 _http_semaphore = asyncio.Semaphore(3)
 
-# FIX #3: shared aiohttp session created once at startup instead of
-# opening a new ClientSession on every single HTTP call.
 _http_session: aiohttp.ClientSession | None = None
 
 async def get_http_session() -> aiohttp.ClientSession:
@@ -203,7 +202,7 @@ DISCORD_TOKEN    = os.getenv('DISCORD_TOKEN')
 
 APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwiKn7Xo_nGyfRvtH3z8LEPYPbxXOKjvM8DRCfbg2gbYO5jSfUEv9ZT5unVUaJoVIk/exec'
 
-SELF_PING_INTERVAL = 300
+SELF_PING_INTERVAL   = 300
 SELF_PING_CHANNEL_ID = os.getenv('SELF_PING_CHANNEL_ID')
 
 ACADEMY_TIMETABLE_CHANNEL_ID      = 0
@@ -214,41 +213,43 @@ TIMETABLE_POST_TIME               = "21:15"
 YEAR_LEADER_ROLE_ID               = 0
 TIMETABLE_ADMIN_ROLE_ID           = 1438202314476228678
 
+# Cookie is read from env — never hardcoded
 ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
-ROBLOX_GROUP_ID = "779411059"
+ROBLOX_GROUP_ID = 779411059   # integer, used by RobloxAPI
 
+# Maps sheet role name → Roblox group rank name
 ROLE_NAME_MAP = {
-    "School Staff":                               "Teaching Staff",
-    "Deputy Head of Year 7":                       "Deputy Head of Year",
-    "Deputy Head of Year 8":                       "Deputy Head of Year",
-    "Deputy Head of Year 9":                       "Deputy Head of Year",
-    "Deputy Head of Year 10":                      "Deputy Head of Year",
-    "Deputy Head of Year 11":                      "Deputy Head of Year",
-    "Deputy Head of Sixth Form":                   "Deputy Head of Year",
-    "Head of Year 7":                              "Head of Year",
-    "Head of Year 8":                              "Head of Year",
-    "Head of Year 9":                              "Head of Year",
-    "Head of Year 10":                             "Head of Year",
-    "Head of Year 11":                             "Head of Year",
-    "Head of Sixth Form":                          "Head of Year",
-    "Deputy Head of Lower Level":                  "Deputy Head of Level",
-    "Deputy Head of Middle Level":                  "Deputy Head of Level",
-    "Deputy Head of Upper Level":                  "Deputy Head of Level",
-    "Head of Lower Level":                         "Head of Level",
-    "Head of Middle Level":                        "Head of Level",
-    "Head of Upper Level":                         "Head of Level",
-    "Site Staff":                                  "Site Staff",
-    "Site Executive":                              "Site Operations Executive",
-    "Assistant Headteacher":                       "Assistant Headteacher",
-    "Deputy Headteacher":                          "Deputy Headteacher",
-    "Headteacher":                                 "Headteacher",
-    "Executive Headteacher":                       "Executive Headteacher",
-    "Chief Education Officer":                     "Chief Education Officer",
+    "School Staff":                  "Teaching Staff",
+    "Deputy Head of Year 7":         "Deputy Head of Year",
+    "Deputy Head of Year 8":         "Deputy Head of Year",
+    "Deputy Head of Year 9":         "Deputy Head of Year",
+    "Deputy Head of Year 10":        "Deputy Head of Year",
+    "Deputy Head of Year 11":        "Deputy Head of Year",
+    "Deputy Head of Sixth Form":     "Deputy Head of Year",
+    "Head of Year 7":                "Head of Year",
+    "Head of Year 8":                "Head of Year",
+    "Head of Year 9":                "Head of Year",
+    "Head of Year 10":               "Head of Year",
+    "Head of Year 11":               "Head of Year",
+    "Head of Sixth Form":            "Head of Year",
+    "Deputy Head of Lower Level":    "Deputy Head of Level",
+    "Deputy Head of Middle Level":   "Deputy Head of Level",
+    "Deputy Head of Upper Level":    "Deputy Head of Level",
+    "Head of Lower Level":           "Head of Level",
+    "Head of Middle Level":          "Head of Level",
+    "Head of Upper Level":           "Head of Level",
+    "Site Staff":                    "Site Staff",
+    "Site Executive":                "Site Operations Executive",
+    "Assistant Headteacher":         "Assistant Headteacher",
+    "Deputy Headteacher":            "Deputy Headteacher",
+    "Headteacher":                   "Headteacher",
+    "Executive Headteacher":         "Executive Headteacher",
+    "Chief Education Officer":       "Chief Education Officer",
 }
 
 # Roles with unlimited openings — everything else has exactly 1 spot
 INFINITE_ROLES = {
-    "School Staff"
+    "School Staff",
 }
 
 ALL_STAFF_SHEET     = "All Staff"
@@ -280,6 +281,192 @@ FIELD_MAP = {
 print("Starting bot...", flush=True)
 print(f"Token present: {bool(DISCORD_TOKEN)}", flush=True)
 print(f"Google credentials present: {bool(os.getenv('GOOGLE_CREDENTIALS'))}", flush=True)
+print(f"Roblox cookie present: {bool(ROBLOX_COOKIE)}", flush=True)
+
+
+# -------------------------------------------------
+#  ROBLOX API CLASS  (sync requests, run in executor)
+# -------------------------------------------------
+class RobloxAPI:
+    """Handles all Roblox API interactions using the working requests pattern."""
+
+    def __init__(self, security_cookie: str, group_id: int):
+        self.security_cookie = security_cookie.strip()
+        self.group_id        = group_id
+        self.session         = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+
+    # ------------------------------------------------------------------
+    def get_user_id_by_username(self, username: str) -> int | None:
+        """Resolve a Roblox username → user ID."""
+        try:
+            resp = self.session.post(
+                "https://users.roblox.com/v1/usernames/users",
+                json={"usernames": [username], "excludeBannedUsers": False},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            return data[0]["id"] if data else None
+        except Exception as e:
+            print(f"[Roblox] Username → ID error: {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    def get_group_roles(self) -> list[dict]:
+        """Return all roles in the group."""
+        try:
+            resp = self.session.get(
+                f"https://groups.roblox.com/v1/groups/{self.group_id}/roles",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json().get("roles", [])
+        except Exception as e:
+            print(f"[Roblox] Get group roles error: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    def find_role_id_by_name(self, roblox_rank_name: str) -> int | None:
+        """Find a role ID in the group by its display name (case-insensitive)."""
+        for role in self.get_group_roles():
+            if role["name"].lower() == roblox_rank_name.lower():
+                return role["id"]
+        return None
+
+    # ------------------------------------------------------------------
+    def find_rank_1_role_id(self) -> int | None:
+        """Find the role ID for rank 1 (lowest rank) in the group."""
+        roles = self.get_group_roles()
+        if not roles:
+            return None
+        rank_1 = next((r for r in roles if r["rank"] == 1), None)
+        if rank_1:
+            return rank_1["id"]
+        # Fallback: lowest rank available
+        return sorted(roles, key=lambda r: r["rank"])[0]["id"]
+
+    # ------------------------------------------------------------------
+    def change_user_rank(self, user_id: int, role_id: int) -> tuple[bool, str]:
+        """
+        PATCH the user's rank in the group.
+
+        Pattern from the working script:
+          1. First PATCH with cookie only (no CSRF).
+          2. If 403 and X-CSRF-TOKEN header present, grab token and retry.
+          3. Return (True, "") on 200, (False, reason) otherwise.
+        """
+        url     = f"https://groups.roblox.com/v1/groups/{self.group_id}/users/{user_id}"
+        headers = {
+            "Cookie":       f".ROBLOSECURITY={self.security_cookie}",
+            "Content-Type": "application/json",
+            "Accept":       "application/json",
+        }
+        payload = {"roleId": role_id}
+
+        try:
+            # Attempt 1 — triggers CSRF challenge
+            resp = self.session.patch(url, headers=headers, json=payload, timeout=10)
+
+            # Grab CSRF token from the 403 response and retry
+            if resp.status_code == 403 and "X-CSRF-TOKEN" in resp.headers:
+                headers["X-CSRF-TOKEN"] = resp.headers["X-CSRF-TOKEN"]
+                resp = self.session.patch(url, headers=headers, json=payload, timeout=10)
+
+            # Evaluate final response
+            if resp.status_code == 200:
+                return True, ""
+            if resp.status_code == 401:
+                return False, "Authentication failed — cookie may be expired."
+            if resp.status_code == 403:
+                return False, "Insufficient permissions to rank this user."
+            if resp.status_code == 400:
+                return False, "Bad request — invalid user ID or role ID."
+            if resp.status_code == 404:
+                return False, "User not found in the group."
+
+            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+
+        except Exception as e:
+            print(f"[Roblox] change_user_rank error: {e}")
+            return False, f"Network error: {e}"
+
+
+# -------------------------------------------------
+#  Instantiate Roblox API (lazily — cookie may not be set at import)
+# -------------------------------------------------
+def get_roblox_api() -> RobloxAPI | None:
+    if not ROBLOX_COOKIE:
+        return None
+    return RobloxAPI(ROBLOX_COOKIE, ROBLOX_GROUP_ID)
+
+
+# -------------------------------------------------
+#  Async wrappers (run sync RobloxAPI in executor)
+# -------------------------------------------------
+async def roblox_get_user_id(username: str) -> int | None:
+    api = get_roblox_api()
+    if not api:
+        return None
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, api.get_user_id_by_username, username)
+
+
+async def roblox_set_rank_by_sheet_role(
+    roblox_username: str,
+    sheet_role_name: str,
+) -> tuple[bool, str]:
+    """
+    Full pipeline:
+      sheet role name → ROLE_NAME_MAP → Roblox rank name → role ID → PATCH
+    Returns (success, message).
+    """
+    api = get_roblox_api()
+    if not api:
+        return False, "ROBLOX_AUTH_TOKEN environment variable is not set."
+
+    roblox_rank_name = ROLE_NAME_MAP.get(sheet_role_name)
+    if not roblox_rank_name:
+        return False, f"No Roblox rank mapped for sheet role **{sheet_role_name}**."
+
+    loop = asyncio.get_running_loop()
+
+    user_id = await loop.run_in_executor(None, api.get_user_id_by_username, roblox_username)
+    if not user_id:
+        return False, f"Roblox user **{roblox_username}** not found."
+
+    role_id = await loop.run_in_executor(None, api.find_role_id_by_name, roblox_rank_name)
+    if not role_id:
+        return False, f"Rank **{roblox_rank_name}** not found in the group."
+
+    success, err = await loop.run_in_executor(None, api.change_user_rank, user_id, role_id)
+    if success:
+        return True, roblox_rank_name   # return rank name so embed can show it
+    return False, err
+
+
+async def roblox_demote_to_rank_1(roblox_username: str) -> tuple[bool, str]:
+    """Demote a user to rank 1 (used when removing staff)."""
+    api = get_roblox_api()
+    if not api:
+        return False, "ROBLOX_AUTH_TOKEN environment variable is not set."
+
+    loop = asyncio.get_running_loop()
+
+    user_id = await loop.run_in_executor(None, api.get_user_id_by_username, roblox_username)
+    if not user_id:
+        return False, f"Roblox user **{roblox_username}** not found."
+
+    role_id = await loop.run_in_executor(None, api.find_rank_1_role_id)
+    if not role_id:
+        return False, "Could not find rank 1 role in the group."
+
+    success, err = await loop.run_in_executor(None, api.change_user_rank, user_id, role_id)
+    return success, err
+
+
 # -------------------------------------------------
 #  BOT SETUP
 # -------------------------------------------------
@@ -328,14 +515,12 @@ def setup_google_sheets():
     try:
         credentials_json = os.getenv("GOOGLE_CREDENTIALS")
         if credentials_json:
-            # Used on hosted platforms (Render, Railway, etc.)
             creds_dict = json.loads(credentials_json)
             creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         else:
-            # Used locally — load from credentials.json file
             print("GOOGLE_CREDENTIALS env var not set, falling back to credentials.json file")
             creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-        
+
         sheets_client = gspread.authorize(creds)
         spreadsheet   = sheets_client.open_by_key(SPREADSHEET_ID)
         print("Connected to Google Sheets!")
@@ -380,6 +565,20 @@ async def get_staff_teaching_name(discord_id: str):
                 return row[CURRENT_STAFF_NAME_COL].strip()
     except Exception as e:
         print(f"Error getting teaching name: {e}")
+    return None
+
+
+async def get_roblox_username_for_staff(teaching_name: str) -> str | None:
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+            if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
+                username = safe_get(row, 2)
+                return username if username != "N/A" else None
+    except Exception as e:
+        print(f"[Roblox] Sheet username lookup error: {e}")
     return None
 
 
@@ -453,7 +652,7 @@ async def timetable_post_task():
 @tasks.loop(minutes=1)
 async def timetable_reminder_task():
     now = datetime.now()
-    current_time = now.strftime("%H:%M")
+    current_time  = now.strftime("%H:%M")
     reminder_times = ["21:15", "23:00", "07:30", "15:00", "16:30", "18:00", "19:00"]
 
     if current_time not in reminder_times:
@@ -541,9 +740,6 @@ async def on_ready():
     print(f'In {len(bot.guilds)} server(s)')
     setup_google_sheets()
 
-    # FIX #2: run the initial cache refresh through the executor so it
-    # doesn't block the event loop, and guard it so it only fires once
-    # rather than on every reconnect (which hammers the Sheets API).
     if not hasattr(bot, '_cache_loaded'):
         bot._cache_loaded = True
         asyncio.get_event_loop().run_in_executor(None, refresh_staff_names_cache)
@@ -553,8 +749,6 @@ async def on_ready():
 
     await bot.change_presence(activity=discord.CustomActivity(name="Winstree Academy's Assistant. Run /hello to try me out!"))
 
-    # FIX #1: only sync commands once per process lifetime, not on every
-    # reconnect. Discord heavily rate-limits tree.sync() calls.
     if not hasattr(bot, '_synced'):
         bot._synced = True
         try:
@@ -658,116 +852,19 @@ async def edit_value_autocomplete(interaction: discord.Interaction, current: str
 
 
 # -------------------------------------------------
-#  ROBLOX HELPERS
-# -------------------------------------------------
-async def get_roblox_user_id(username: str) -> int | None:
-    try:
-        session = await get_http_session()
-        async with session.post(
-            "https://users.roblox.com/v1/usernames/users",
-            json={"usernames": [username], "excludeBannedUsers": False}
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                if data.get("data"):
-                    return data["data"][0]["id"]
-    except Exception as e:
-        print(f"[Roblox] User ID lookup error: {e}")
-    return None
-
-
-async def get_group_role_id(role_name: str) -> int | None:
-    roblox_role_name = ROLE_NAME_MAP.get(role_name)
-    if not roblox_role_name:
-        return None
-    try:
-        session = await get_http_session()
-        async with session.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles") as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                for role in data.get("roles", []):
-                    if role["name"].lower() == roblox_role_name.lower():
-                        return role["id"]
-    except Exception as e:
-        print(f"[Roblox] Role ID lookup error: {e}")
-    return None
-
-
-async def get_rank_1_role_id() -> int | None:
-    try:
-        session = await get_http_session()
-        async with session.get(f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/roles") as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                roles = data.get("roles", [])
-                rank_1 = next((r for r in roles if r["rank"] == 6), None)
-                if rank_1:
-                    return rank_1["id"]
-                if roles:
-                    return sorted(roles, key=lambda r: r["rank"])[0]["id"]
-    except Exception as e:
-        print(f"[Roblox] Rank 1 role ID error: {e}")
-    return None
-
-
-async def set_user_group_role(roblox_user_id: int, role_id: int) -> tuple[bool, str]:
-    if not ROBLOX_COOKIE or not ROBLOX_GROUP_ID:
-        return False, "ROBLOX_COOKIE or ROBLOX_GROUP_ID not configured"
-    try:
-        cookie = ROBLOX_COOKIE.strip()
-        cookie_header = {"Cookie": f".ROBLOSECURITY={cookie}"}
-        session = await get_http_session()
-        async with session.patch(
-            f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{roblox_user_id}",
-            json={"roleId": role_id},
-            headers={**cookie_header, "Content-Type": "application/json"}
-        ) as first_resp:
-            csrf = first_resp.headers.get("x-csrf-token", "").strip()
-            if first_resp.status == 200:
-                return True, ""
-        if not csrf:
-            return False, "Roblox did not return a CSRF token"
-        async with session.patch(
-            f"https://groups.roblox.com/v1/groups/{ROBLOX_GROUP_ID}/users/{roblox_user_id}",
-            json={"roleId": role_id},
-            headers={**cookie_header, "Content-Type": "application/json", "X-CSRF-TOKEN": csrf}
-        ) as resp:
-            if resp.status == 200:
-                return True, ""
-            text = await resp.text()
-            return False, f"HTTP {resp.status}: {text[:200]}"
-    except Exception as e:
-        return False, str(e)
-
-
-async def get_roblox_username_for_staff(teaching_name: str) -> str | None:
-    try:
-        all_data = await safe_sheets_call(
-            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
-        )
-        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
-            if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
-                username = safe_get(row, 2)
-                return username if username != "N/A" else None
-    except Exception as e:
-        print(f"[Roblox] Sheet username lookup error: {e}")
-    return None
-
-
-# -------------------------------------------------
 #  TIMETABLE COMMANDS
 # -------------------------------------------------
 @bot.tree.command(name="bookacademy", description="Book a slot on the Academy timetable")
 @app_commands.describe(year="Select the year group", period="Select the period to book", subject="Enter the subject name", room="Enter the room number/name")
 @app_commands.choices(year=[
-    app_commands.Choice(name="Year 7", value="Year 7"),
-    app_commands.Choice(name="Year 8", value="Year 8"),
-    app_commands.Choice(name="Year 9", value="Year 9"),
-    app_commands.Choice(name="Year 10", value="Year 10"),
-    app_commands.Choice(name="Year 11", value="Year 11"),
+    app_commands.Choice(name="Year 7",                value="Year 7"),
+    app_commands.Choice(name="Year 8",                value="Year 8"),
+    app_commands.Choice(name="Year 9",                value="Year 9"),
+    app_commands.Choice(name="Year 10",               value="Year 10"),
+    app_commands.Choice(name="Year 11",               value="Year 11"),
     app_commands.Choice(name="Additional Needs Unit", value="Additional Needs Unit"),
-    app_commands.Choice(name="Isolation", value="Isolation"),
-    app_commands.Choice(name="Detention", value="Detention"),
+    app_commands.Choice(name="Isolation",             value="Isolation"),
+    app_commands.Choice(name="Detention",             value="Detention"),
 ])
 @cooldown()
 async def book_academy(interaction: discord.Interaction, year: str, period: str, subject: str, room: str):
@@ -808,11 +905,11 @@ async def book_academy(interaction: discord.Interaction, year: str, period: str,
         print(f"[Timetable] Error updating Academy message: {e}")
 
     embed = discord.Embed(title="✅ Slot Booked!", color=discord.Color.green())
-    embed.add_field(name="Year Group", value=year, inline=True)
-    embed.add_field(name="Period", value=period, inline=True)
-    embed.add_field(name="Subject", value=subject, inline=True)
-    embed.add_field(name="Room", value=room, inline=True)
-    embed.add_field(name="Booked By", value=teaching_name, inline=True)
+    embed.add_field(name="Year Group", value=year,          inline=True)
+    embed.add_field(name="Period",     value=period,        inline=True)
+    embed.add_field(name="Subject",    value=subject,       inline=True)
+    embed.add_field(name="Room",       value=room,          inline=True)
+    embed.add_field(name="Booked By",  value=teaching_name, inline=True)
     embed.set_footer(text="Academy Timetable")
     await interaction.followup.send(embed=embed)
 
@@ -833,11 +930,11 @@ async def period_autocomplete_academy(interaction: discord.Interaction, current:
 @bot.tree.command(name="booksf", description="Book a slot on the Sixth Form timetable")
 @app_commands.describe(year="Select the year group", period="Select the period to book", subject="Enter the subject name", room="Enter the room number/name")
 @app_commands.choices(year=[
-    app_commands.Choice(name="Year 12", value="Year 12"),
-    app_commands.Choice(name="Year 13", value="Year 13"),
+    app_commands.Choice(name="Year 12",               value="Year 12"),
+    app_commands.Choice(name="Year 13",               value="Year 13"),
     app_commands.Choice(name="Additional Needs Unit", value="Additional Needs Unit"),
-    app_commands.Choice(name="Isolation", value="Isolation"),
-    app_commands.Choice(name="Detention", value="Detention"),
+    app_commands.Choice(name="Isolation",             value="Isolation"),
+    app_commands.Choice(name="Detention",             value="Detention"),
 ])
 @cooldown()
 async def book_sixth_form(interaction: discord.Interaction, year: str, period: str, subject: str, room: str):
@@ -878,11 +975,11 @@ async def book_sixth_form(interaction: discord.Interaction, year: str, period: s
         print(f"[Timetable] Error updating Sixth Form message: {e}")
 
     embed = discord.Embed(title="✅ Slot Booked!", color=discord.Color.green())
-    embed.add_field(name="Year Group", value=year, inline=True)
-    embed.add_field(name="Period", value=period, inline=True)
-    embed.add_field(name="Subject", value=subject, inline=True)
-    embed.add_field(name="Room", value=room, inline=True)
-    embed.add_field(name="Booked By", value=teaching_name, inline=True)
+    embed.add_field(name="Year Group", value=year,          inline=True)
+    embed.add_field(name="Period",     value=period,        inline=True)
+    embed.add_field(name="Subject",    value=subject,       inline=True)
+    embed.add_field(name="Room",       value=room,          inline=True)
+    embed.add_field(name="Booked By",  value=teaching_name, inline=True)
     embed.set_footer(text="Sixth Form Timetable")
     await interaction.followup.send(embed=embed)
 
@@ -903,14 +1000,14 @@ async def period_autocomplete_sixth_form(interaction: discord.Interaction, curre
 @bot.tree.command(name="removebookingacademy", description="Remove a booking from the Academy timetable")
 @app_commands.describe(year="Select the year group", period="Select the period to remove")
 @app_commands.choices(year=[
-    app_commands.Choice(name="Year 7", value="Year 7"),
-    app_commands.Choice(name="Year 8", value="Year 8"),
-    app_commands.Choice(name="Year 9", value="Year 9"),
-    app_commands.Choice(name="Year 10", value="Year 10"),
-    app_commands.Choice(name="Year 11", value="Year 11"),
+    app_commands.Choice(name="Year 7",                value="Year 7"),
+    app_commands.Choice(name="Year 8",                value="Year 8"),
+    app_commands.Choice(name="Year 9",                value="Year 9"),
+    app_commands.Choice(name="Year 10",               value="Year 10"),
+    app_commands.Choice(name="Year 11",               value="Year 11"),
     app_commands.Choice(name="Additional Needs Unit", value="Additional Needs Unit"),
-    app_commands.Choice(name="Isolation", value="Isolation"),
-    app_commands.Choice(name="Detention", value="Detention"),
+    app_commands.Choice(name="Isolation",             value="Isolation"),
+    app_commands.Choice(name="Detention",             value="Detention"),
 ])
 @cooldown()
 async def remove_booking_academy(interaction: discord.Interaction, year: str, period: str):
@@ -930,7 +1027,7 @@ async def remove_booking_academy(interaction: discord.Interaction, year: str, pe
         return
 
     old_booking = academy_timetable[year][period]
-    is_admin = has_timetable_admin_role(interaction)
+    is_admin    = has_timetable_admin_role(interaction)
 
     if not is_admin:
         teaching_name = await get_staff_teaching_name(str(interaction.user.id))
@@ -952,8 +1049,8 @@ async def remove_booking_academy(interaction: discord.Interaction, year: str, pe
         print(f"[Timetable] Error updating Academy message: {e}")
 
     embed = discord.Embed(title="🗑️ Booking Removed", color=discord.Color.orange())
-    embed.add_field(name="Year Group", value=year, inline=True)
-    embed.add_field(name="Period", value=period, inline=True)
+    embed.add_field(name="Year Group",       value=year,        inline=True)
+    embed.add_field(name="Period",           value=period,      inline=True)
     embed.add_field(name="Previous Booking", value=old_booking, inline=False)
     embed.set_footer(text="Academy Timetable | Removed by Admin" if is_admin else "Academy Timetable")
     await interaction.followup.send(embed=embed)
@@ -975,11 +1072,11 @@ async def period_autocomplete_remove_academy(interaction: discord.Interaction, c
 @bot.tree.command(name="removebookingsf", description="Remove a booking from the Sixth Form timetable")
 @app_commands.describe(year="Select the year group", period="Select the period to remove")
 @app_commands.choices(year=[
-    app_commands.Choice(name="Year 12", value="Year 12"),
-    app_commands.Choice(name="Year 13", value="Year 13"),
+    app_commands.Choice(name="Year 12",               value="Year 12"),
+    app_commands.Choice(name="Year 13",               value="Year 13"),
     app_commands.Choice(name="Additional Needs Unit", value="Additional Needs Unit"),
-    app_commands.Choice(name="Isolation", value="Isolation"),
-    app_commands.Choice(name="Detention", value="Detention"),
+    app_commands.Choice(name="Isolation",             value="Isolation"),
+    app_commands.Choice(name="Detention",             value="Detention"),
 ])
 @cooldown()
 async def remove_booking_sixth_form(interaction: discord.Interaction, year: str, period: str):
@@ -999,7 +1096,7 @@ async def remove_booking_sixth_form(interaction: discord.Interaction, year: str,
         return
 
     old_booking = sixth_form_timetable[year][period]
-    is_admin = has_timetable_admin_role(interaction)
+    is_admin    = has_timetable_admin_role(interaction)
 
     if not is_admin:
         teaching_name = await get_staff_teaching_name(str(interaction.user.id))
@@ -1021,8 +1118,8 @@ async def remove_booking_sixth_form(interaction: discord.Interaction, year: str,
         print(f"[Timetable] Error updating Sixth Form message: {e}")
 
     embed = discord.Embed(title="🗑️ Booking Removed", color=discord.Color.orange())
-    embed.add_field(name="Year Group", value=year, inline=True)
-    embed.add_field(name="Period", value=period, inline=True)
+    embed.add_field(name="Year Group",       value=year,        inline=True)
+    embed.add_field(name="Period",           value=period,      inline=True)
     embed.add_field(name="Previous Booking", value=old_booking, inline=False)
     embed.set_footer(text="Sixth Form Timetable | Removed by Admin" if is_admin else "Sixth Form Timetable")
     await interaction.followup.send(embed=embed)
@@ -1080,6 +1177,7 @@ async def post_sixth_form_timetable(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
+
 # -------------------------------------------------
 #  /openroles
 # -------------------------------------------------
@@ -1089,7 +1187,6 @@ async def open_roles(interaction: discord.Interaction):
     await interaction.response.defer()
 
     try:
-        # Fetch every role from the Roles List sheet
         roles_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(ROLES_LIST_SHEET).get_all_values()
         )
@@ -1105,7 +1202,6 @@ async def open_roles(interaction: discord.Interaction):
             await interaction.followup.send("❌ No roles found in the Roles List sheet.")
             return
 
-        # Fetch current staff to count how many people hold each role
         current_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
         )
@@ -1113,11 +1209,10 @@ async def open_roles(interaction: discord.Interaction):
         role_counts: dict[str, int] = {}
         for row in current_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) > 1:
-                role = row[1].strip()   # Column B = Role
+                role = row[1].strip()
                 if role:
                     role_counts[role] = role_counts.get(role, 0) + 1
 
-        # Split roles into three buckets
         infinite_roles:   list[str] = []
         singleton_open:   list[str] = []
         singleton_filled: list[str] = []
@@ -1130,28 +1225,30 @@ async def open_roles(interaction: discord.Interaction):
             else:
                 singleton_filled.append(role)
 
-        # ---- Build embed ----
         embed = discord.Embed(
             title="📋 Staff Role Openings",
             color=discord.Color.blue(),
             timestamp=datetime.now(),
         )
 
-        if singleton_open:
-            # Chunk into ≤1024-char fields if there are many roles
+        def add_chunked_field(embed, label_first, label_cont, items):
             chunk, chunks = "", []
-            for role in singleton_open:
-                line = f"• {role}\n"
+            for item in items:
+                line = f"• {item}\n"
                 if len(chunk) + len(line) > 1000:
                     chunks.append(chunk.strip())
                     chunk = ""
                 chunk += line
             if chunk:
                 chunks.append(chunk.strip())
-
             for i, c in enumerate(chunks):
-                label = f"✅ Open Positions ({len(singleton_open)})" if i == 0 else "✅ Open Positions (cont.)"
-                embed.add_field(name=label, value=c, inline=False)
+                embed.add_field(name=label_first if i == 0 else label_cont, value=c, inline=False)
+
+        if singleton_open:
+            add_chunked_field(embed,
+                f"✅ Open Positions ({len(singleton_open)})",
+                "✅ Open Positions (cont.)",
+                singleton_open)
         else:
             embed.add_field(name="✅ Open Positions", value="*All positions are currently filled.*", inline=False)
 
@@ -1163,23 +1260,13 @@ async def open_roles(interaction: discord.Interaction):
             )
 
         if singleton_filled:
-            chunk, chunks = "", []
-            for role in singleton_filled:
-                line = f"• {role}\n"
-                if len(chunk) + len(line) > 1000:
-                    chunks.append(chunk.strip())
-                    chunk = ""
-                chunk += line
-            if chunk:
-                chunks.append(chunk.strip())
-
-            for i, c in enumerate(chunks):
-                label = f"❌ Filled Positions ({len(singleton_filled)})" if i == 0 else "❌ Filled Positions (cont.)"
-                embed.add_field(name=label, value=c, inline=False)
+            add_chunked_field(embed,
+                f"❌ Filled Positions ({len(singleton_filled)})",
+                "❌ Filled Positions (cont.)",
+                singleton_filled)
 
         embed.set_footer(
-            text=f"{len(singleton_open)} open · {len(singleton_filled)} filled · "
-                 f"{len(infinite_roles)} unlimited"
+            text=f"{len(singleton_open)} open · {len(singleton_filled)} filled · {len(infinite_roles)} unlimited"
         )
         await interaction.followup.send(embed=embed)
 
@@ -1187,6 +1274,8 @@ async def open_roles(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Sheet '{ROLES_LIST_SHEET}' not found!")
     except Exception as e:
         await interaction.followup.send(f"❌ Unexpected error: {e}")
+
+
 # -------------------------------------------------
 #  /status
 # -------------------------------------------------
@@ -1209,6 +1298,7 @@ async def bot_status(interaction: discord.Interaction):
     embed.add_field(name="Failed Checks",  value=ping_failures,            inline=True)
     embed.add_field(name="Check Interval", value=f"{SELF_PING_INTERVAL}s", inline=True)
     embed.add_field(name="Google Sheets",  value="Connected" if sheets_client else "Disconnected", inline=True)
+    embed.add_field(name="Roblox Cookie",  value="✅ Set" if ROBLOX_COOKIE else "❌ Missing", inline=True)
 
     if ping_failures == 0 and bot.latency < 1:
         embed.add_field(name="Overall Status", value="✅ Healthy",        inline=False)
@@ -1226,7 +1316,7 @@ async def bot_status(interaction: discord.Interaction):
 # -------------------------------------------------
 #  /edit
 # -------------------------------------------------
-@bot.tree.command(name="edit", description="Edit a staff member's details in the Edit Staff sheet")
+@bot.tree.command(name="edit", description="Edit a staff member's details")
 @app_commands.describe(staff_name="Select the staff member to edit", field="Which field to update", value="New value for the field")
 @app_commands.choices(field=[
     app_commands.Choice(name="Role",            value="role"),
@@ -1255,20 +1345,17 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
             embed.add_field(name="Staff Member",  value=staff_name,                       inline=True)
             embed.add_field(name="Field Updated", value=f"{field_label} ({target_cell})", inline=True)
             embed.add_field(name="New Value",     value=value,                            inline=True)
-            embed.set_footer(text="Edit Staff sheet has been updated")
+            embed.set_footer(text="Staff record has been updated")
 
+            # If role changed, update Roblox rank too
             if field == "role":
                 roblox_username = await get_roblox_username_for_staff(staff_name)
                 if roblox_username:
-                    roblox_user_id = await get_roblox_user_id(roblox_username)
-                    role_id        = await get_group_role_id(value)
-                    if roblox_user_id and role_id:
-                        success, err = await set_user_group_role(roblox_user_id, role_id)
-                        embed.add_field(name="Roblox Group", value=f"✅ Rank updated to **{value}**" if success else f"⚠️ Could not update rank: {err}", inline=False)
-                    elif not roblox_user_id:
-                        embed.add_field(name="Roblox Group", value=f"⚠️ Roblox user **{roblox_username}** not found", inline=False)
+                    success, result = await roblox_set_rank_by_sheet_role(roblox_username, value)
+                    if success:
+                        embed.add_field(name="Roblox Group", value=f"✅ Ranked to **{result}**", inline=False)
                     else:
-                        embed.add_field(name="Roblox Group", value=f"⚠️ Role **{ROLE_NAME_MAP.get(value, value)}** not found in group", inline=False)
+                        embed.add_field(name="Roblox Group", value=f"⚠️ {result}", inline=False)
                 else:
                     embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
 
@@ -1350,8 +1437,8 @@ async def revoke_strike(interaction: discord.Interaction, staff_name: str):
                     pass
 
             embed = discord.Embed(title="✅ Strike Revoked", color=discord.Color.green())
-            embed.add_field(name="Staff Member",      value=staff_name,    inline=True)
-            embed.add_field(name="Remaining Strikes", value=new_strikes,   inline=True)
+            embed.add_field(name="Staff Member",      value=staff_name,     inline=True)
+            embed.add_field(name="Remaining Strikes", value=new_strikes,    inline=True)
             embed.add_field(name="Revoked Strike",    value=revoked_reason, inline=False)
             embed.set_footer(text="Most recent strike has been removed")
             await interaction.followup.send(embed=embed)
@@ -1378,7 +1465,7 @@ async def set_loa(interaction: discord.Interaction, staff_name: str, start_date:
         return
 
     loa_value = f"{start_date.strip()} - {end_date.strip()}"
-    params = {"action": "loa", "staffName": staff_name, "loaValue": loa_value, "loaReason": reason.strip()}
+    params    = {"action": "loa", "staffName": staff_name, "loaValue": loa_value, "loaReason": reason.strip()}
 
     try:
         status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
@@ -1537,24 +1624,21 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
         status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
 
         if status == 200 and "error" not in response_text.lower():
-            embed = discord.Embed(title="New Staff Member Hired!", color=discord.Color.green())
+            embed = discord.Embed(title="✅ New Staff Member Hired!", color=discord.Color.green())
             embed.add_field(name="Teaching Name",   value=teaching_name,           inline=True)
             embed.add_field(name="Roblox Username", value=roblox_username,         inline=True)
             embed.add_field(name="Discord Account", value=discord_account.mention, inline=True)
             embed.add_field(name="Discord ID",      value=discord_user_id,         inline=True)
             embed.add_field(name="Area",            value=area,                    inline=True)
             embed.add_field(name="Role",            value=role,                    inline=True)
-            embed.set_footer(text="Edit Staff sheet has been updated")
+            embed.set_footer(text="Staff record has been created")
 
-            roblox_user_id = await get_roblox_user_id(roblox_username)
-            role_id        = await get_group_role_id(role)
-            if roblox_user_id and role_id:
-                success, err = await set_user_group_role(roblox_user_id, role_id)
-                embed.add_field(name="Roblox Group", value=f"✅ Rank set to **{role}**" if success else f"⚠️ Could not set rank: {err}", inline=False)
-            elif not roblox_user_id:
-                embed.add_field(name="Roblox Group", value=f"⚠️ Roblox user **{roblox_username}** not found", inline=False)
+            # Rank on Roblox using the working pipeline
+            success, result = await roblox_set_rank_by_sheet_role(roblox_username, role)
+            if success:
+                embed.add_field(name="Roblox Group", value=f"✅ Ranked to **{result}**", inline=False)
             else:
-                embed.add_field(name="Roblox Group", value=f"⚠️ Role **{ROLE_NAME_MAP.get(role, role)}** not found in group", inline=False)
+                embed.add_field(name="Roblox Group", value=f"⚠️ {result}", inline=False)
 
             await interaction.followup.send(embed=embed)
         else:
@@ -1591,19 +1675,16 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             embed.add_field(name="Staff Member",   value=staff_name,   inline=True)
             embed.add_field(name="Departure Date", value=current_date, inline=True)
             embed.add_field(name="Reason",         value=reason,       inline=False)
-            embed.set_footer(text="Edit Staff sheet has been updated")
+            embed.set_footer(text="Staff record has been updated")
 
+            # Demote to rank 1 on Roblox
             roblox_username = await get_roblox_username_for_staff(staff_name)
             if roblox_username:
-                roblox_user_id = await get_roblox_user_id(roblox_username)
-                rank_1_id      = await get_rank_1_role_id()
-                if roblox_user_id and rank_1_id:
-                    success, err = await set_user_group_role(roblox_user_id, rank_1_id)
-                    embed.add_field(name="Roblox Group", value="✅ Demoted to rank 1" if success else f"⚠️ Could not demote: {err}", inline=False)
-                elif not roblox_user_id:
-                    embed.add_field(name="Roblox Group", value=f"⚠️ Roblox user **{roblox_username}** not found", inline=False)
+                success, err = await roblox_demote_to_rank_1(roblox_username)
+                if success:
+                    embed.add_field(name="Roblox Group", value="✅ Demoted to rank 1", inline=False)
                 else:
-                    embed.add_field(name="Roblox Group", value="⚠️ Could not find rank 1 role", inline=False)
+                    embed.add_field(name="Roblox Group", value=f"⚠️ {err}", inline=False)
             else:
                 embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
 
@@ -1713,7 +1794,7 @@ async def mark_attendance(interaction: discord.Interaction, staff_name: str):
             embed = discord.Embed(title="Attendance Marked!", color=discord.Color.green())
             embed.add_field(name="Staff Member", value=staff_name,        inline=True)
             embed.add_field(name="Attendance",   value="1 session added", inline=True)
-            embed.set_footer(text="Edit Staff sheet has been updated")
+            embed.set_footer(text="Attendance has been updated")
             await interaction.followup.send(embed=embed)
         else:
             await interaction.followup.send(f"Apps Script error (HTTP {status}):\n```{response_text[:500]}```")
@@ -1863,9 +1944,9 @@ async def reset_attendance(interaction: discord.Interaction):
 
     try:
         def _reset():
-            worksheet    = spreadsheet.worksheet(ALL_STAFF_SHEET)
-            last_row     = worksheet.row_count
-            cell_range   = worksheet.range(f"J5:J{last_row}")
+            worksheet  = spreadsheet.worksheet(ALL_STAFF_SHEET)
+            last_row   = worksheet.row_count
+            cell_range = worksheet.range(f"J5:J{last_row}")
             for cell in cell_range:
                 cell.value = 0
             worksheet.update_cells(cell_range)
@@ -1924,16 +2005,16 @@ async def set_status(interaction: discord.Interaction, status_text: str, status_
 
 
 # -------------------------------------------------
-#  /ping  /pong
+#  /ping  /hello
 # -------------------------------------------------
 @bot.tree.command(name="ping", description="Check latency")
 @cooldown()
 async def slash_ping(interaction: discord.Interaction):
     await interaction.response.send_message(f'Pong! Latency: {round(bot.latency * 1000)}ms')
 
-@bot.tree.command(name="hello", description="Responds with Ping")
+@bot.tree.command(name="hello", description="Say hello to the bot")
 @cooldown()
-async def slash_pong(interaction: discord.Interaction):
+async def slash_hello(interaction: discord.Interaction):
     await interaction.response.send_message('Goodbye')
 
 
@@ -1945,44 +2026,46 @@ async def slash_pong(interaction: discord.Interaction):
 async def diagnose_roblox(interaction: discord.Interaction):
     await interaction.response.send_message("🔍 Checking environment...", ephemeral=True)
 
-    output = ["=" * 50, "ENVIRONMENT DEBUG", "=" * 50, "\n[1] Checking environment variables..."]
+    output = ["=" * 50, "ROBLOX DIAGNOSTICS", "=" * 50]
 
-    cookie_from_env      = os.getenv('ROBLOX_COOKIE')
-    roblosecurity_from_env = os.getenv('.ROBLOSECURITY')
-    roblosecurity_alt    = os.getenv('ROBLOSECURITY')
+    output.append("\n[1] Environment variable check...")
+    roblox_auth_token = os.getenv('ROBLOX_AUTH_TOKEN')
+    output.append(f"ROBLOX_AUTH_TOKEN present: {roblox_auth_token is not None}")
+    if roblox_auth_token:
+        output.append(f"  Length: {len(roblox_auth_token)} chars")
+        output.append(f"  Starts with _|WARNING: {roblox_auth_token.startswith('_|WARNING')}")
+        output.append(f"  First 60: {roblox_auth_token[:60]}")
+    else:
+        output.append("  ⚠️ NOT SET — ranking will fail!")
 
-    output.append(f"ROBLOX_COOKIE exists: {cookie_from_env is not None}")
-    if cookie_from_env:
-        output.append(f"  Length: {len(cookie_from_env)}")
-        output.append(f"  First 80: {cookie_from_env[:80]}")
-
-    output.append(f"\n.ROBLOSECURITY exists: {roblosecurity_from_env is not None}")
-    if roblosecurity_from_env:
-        output.append(f"  Length: {len(roblosecurity_from_env)}")
-
-    output.append(f"\nROBLOSECURITY exists: {roblosecurity_alt is not None}")
-    if roblosecurity_alt:
-        output.append(f"  Length: {len(roblosecurity_alt)}")
-
-    output.append(f"\n[2] What the bot code sees...")
-    output.append(f"ROBLOX_COOKIE variable: {ROBLOX_COOKIE is not None}")
+    output.append("\n[2] Bot memory check...")
+    output.append(f"ROBLOX_COOKIE in memory: {ROBLOX_COOKIE is not None}")
     if ROBLOX_COOKIE:
-        output.append(f"  Length: {len(ROBLOX_COOKIE)}")
-        output.append(f"  First 80: {ROBLOX_COOKIE[:80]}")
+        output.append(f"  Length: {len(ROBLOX_COOKIE)} chars")
 
-    output.append(f"\n[3] Checking for .env file...")
-    env_exists = os.path.exists('.env')
-    output.append(f".env file exists: {env_exists}")
-    if env_exists:
-        try:
-            with open('.env', 'r') as f:
-                for line in f.readlines()[:10]:
-                    if 'ROBLOX' in line or 'SECURITY' in line:
-                        parts = line.split('=', 1)
-                        if len(parts) == 2:
-                            output.append(f"  {parts[0]}=[{len(parts[1])} chars]")
-        except Exception:
-            output.append("  Could not read .env file")
+    output.append(f"\n[3] Group config...")
+    output.append(f"  ROBLOX_GROUP_ID: {ROBLOX_GROUP_ID}")
+
+    output.append("\n[4] Live group role fetch test...")
+    try:
+        api = get_roblox_api()
+        if api:
+            loop  = asyncio.get_running_loop()
+            roles = await loop.run_in_executor(None, api.get_group_roles)
+            if roles:
+                output.append(f"  ✅ Fetched {len(roles)} roles from the group:")
+                for r in sorted(roles, key=lambda x: x["rank"]):
+                    output.append(f"    Rank {r['rank']:>3}: {r['name']} (id={r['id']})")
+            else:
+                output.append("  ⚠️ No roles returned — check group ID")
+        else:
+            output.append("  ⚠️ No cookie — skipped")
+    except Exception as e:
+        output.append(f"  ❌ Error: {e}")
+
+    output.append("\n[5] ROLE_NAME_MAP entries...")
+    for sheet_role, roblox_rank in ROLE_NAME_MAP.items():
+        output.append(f"  {sheet_role!r} → {roblox_rank!r}")
 
     output.append("\n" + "=" * 50)
     full_output = "\n".join(output)
@@ -2019,39 +2102,6 @@ async def text_readsheet(ctx, sheet_name: str = "Sheet1"):
 # -------------------------------------------------
 #  RUN — with login retry back-off
 # -------------------------------------------------
-async def run_bot():
-    delay = 5
-    max_delay = 300
-    attempt = 0
-
-    while True:
-        attempt += 1
-        try:
-            print(f"[Startup] Login attempt {attempt}…", flush=True)
-            async with bot:
-                await bot.start(DISCORD_TOKEN)
-
-        except discord.errors.HTTPException as e:
-            if e.status == 429:
-                retry_after = float(getattr(e.response, 'headers', {}).get('Retry-After', delay))
-                wait = max(retry_after, delay)
-                print(f"[Startup] 429 rate-limited on login. Waiting {wait:.0f}s before retry…", flush=True)
-                await asyncio.sleep(wait)
-                delay = min(delay * 2, max_delay)
-            else:
-                print(f"[Startup] HTTP error during login: {e}", flush=True)
-                raise
-
-        except discord.errors.LoginFailure:
-            print("[Startup] Invalid Discord token — check your DISCORD_TOKEN env var.", flush=True)
-            raise
-
-        except Exception as e:
-            print(f"[Startup] Unexpected error: {e}. Retrying in {delay}s…", flush=True)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, max_delay)
-
-
 if __name__ == '__main__':
     keep_alive()
 
