@@ -700,7 +700,7 @@ async def get_rank_1_role_id() -> int | None:
             if resp.status == 200:
                 data = await resp.json()
                 roles = data.get("roles", [])
-                rank_1 = next((r for r in roles if r["rank"] == 1), None)
+                rank_1 = next((r for r in roles if r["rank"] == 6), None)
                 if rank_1:
                     return rank_1["id"]
                 if roles:
