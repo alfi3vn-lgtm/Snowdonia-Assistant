@@ -1947,47 +1947,60 @@ async def view_staff(interaction: discord.Interaction):
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
         )
 
-        staff_rows = []
+        roles_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(ROLES_LIST_SHEET).get_all_values()
+        )
+
+        # Build ordered roles list from the sheet, flattened
+        roles_order = []
+        for row in roles_data:
+            for cell in row:
+                cell = cell.strip()
+                if cell and cell not in roles_order:
+                    roles_order.append(cell)
+
+        # Reverse so highest rank is first, then move School Staff to the end
+        roles_order.reverse()
+        if "School Staff" in roles_order:
+            roles_order.remove("School Staff")
+            roles_order.append("School Staff")
+
+        # Read staff
+        staff_by_role: dict[str, list[str]] = {role: [] for role in roles_order}
+        unmatched: list[tuple[str, str]] = []
+
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
             name = safe_get(row, CURRENT_STAFF_NAME_COL, "").strip()
             role = safe_get(row, 1, "").strip()
-            area = safe_get(row, 4, "").strip()
-            if name and name != "N/A":
-                staff_rows.append((name, role, area))
+            if not name or name == "N/A":
+                continue
+            if role in staff_by_role:
+                staff_by_role[role].append(name)
+            else:
+                unmatched.append((name, role))
 
-        if not staff_rows:
-            await interaction.followup.send("❌ No current staff members found.")
-            return
-
-        # Group by area
-        academy_staff   = [(n, r) for n, r, a in staff_rows if a.lower() == "academy"]
-        sixth_form_staff = [(n, r) for n, r, a in staff_rows if a.lower() == "sixth form"]
-        other_staff     = [(n, r) for n, r, a in staff_rows if a.lower() not in ("academy", "sixth form")]
-
-        def build_section(members):
-            if not members:
-                return "*None*"
-            return "\n".join(f"• **{name}** — {role}" for name, role in sorted(members, key=lambda x: x[0]))
-
+        # Build embed
         embed = discord.Embed(
             title="👥 Current Staff",
             color=discord.Color.blue(),
             timestamp=datetime.now()
         )
 
-        # Chunked field adder to handle Discord's 1024 char field limit
-        def add_section(embed, title, members):
+        total = 0
+        for role in roles_order:
+            members = sorted(staff_by_role.get(role, []))
             if not members:
-                embed.add_field(name=title, value="*None*", inline=False)
-                return
-            sorted_members = sorted(members, key=lambda x: x[0])
+                continue
+            total += len(members)
+
+            # Chunk if needed to stay under Discord's 1024 char field limit
             chunk = ""
             first = True
-            for name, role in sorted_members:
-                line = f"• **{name}** — {role}\n"
+            for name in members:
+                line = f"• {name}\n"
                 if len(chunk) + len(line) > 1000:
                     embed.add_field(
-                        name=title if first else f"{title} (cont.)",
+                        name=f"**{role}**" if first else f"**{role}** (cont.)",
                         value=chunk.strip(),
                         inline=False
                     )
@@ -1996,19 +2009,16 @@ async def view_staff(interaction: discord.Interaction):
                 chunk += line
             if chunk:
                 embed.add_field(
-                    name=title if first else f"{title} (cont.)",
+                    name=f"**{role}**" if first else f"**{role}** (cont.)",
                     value=chunk.strip(),
                     inline=False
                 )
 
-        if academy_staff:
-            add_section(embed, f"🏫 Academy ({len(academy_staff)})", academy_staff)
-        if sixth_form_staff:
-            add_section(embed, f"🎓 Sixth Form ({len(sixth_form_staff)})", sixth_form_staff)
-        if other_staff:
-            add_section(embed, f"📋 Other ({len(other_staff)})", other_staff)
+        if unmatched:
+            value = "\n".join(f"• {n} — {r}" for n, r in sorted(unmatched))
+            embed.add_field(name="❓ Unknown Role", value=value, inline=False)
 
-        embed.set_footer(text=f"{len(staff_rows)} staff member(s) total")
+        embed.set_footer(text=f"{total} staff member(s) total")
         await interaction.followup.send(embed=embed)
 
     except gspread.WorksheetNotFound:
