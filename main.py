@@ -68,6 +68,7 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "setstatus":            10,
     "diagnoseroblox":       30,
     "openroles":            10,
+    "viewstaff":            10,
 }
 
 def cooldown(command_name: str | None = None):
@@ -1932,6 +1933,88 @@ async def check_attendance(interaction: discord.Interaction):
         await interaction.followup.send(f"Sheet '{CURRENT_STAFF_SHEET}' not found!")
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
+
+# -------------------------------------------------
+#  /viewstaff
+# -------------------------------------------------
+@bot.tree.command(name="viewstaff", description="View all current staff members and their roles")
+@cooldown()
+async def view_staff(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+
+        staff_rows = []
+        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+            name = safe_get(row, CURRENT_STAFF_NAME_COL, "").strip()
+            role = safe_get(row, 1, "").strip()
+            area = safe_get(row, 4, "").strip()
+            if name and name != "N/A":
+                staff_rows.append((name, role, area))
+
+        if not staff_rows:
+            await interaction.followup.send("❌ No current staff members found.")
+            return
+
+        # Group by area
+        academy_staff   = [(n, r) for n, r, a in staff_rows if a.lower() == "academy"]
+        sixth_form_staff = [(n, r) for n, r, a in staff_rows if a.lower() == "sixth form"]
+        other_staff     = [(n, r) for n, r, a in staff_rows if a.lower() not in ("academy", "sixth form")]
+
+        def build_section(members):
+            if not members:
+                return "*None*"
+            return "\n".join(f"• **{name}** — {role}" for name, role in sorted(members, key=lambda x: x[0]))
+
+        embed = discord.Embed(
+            title="👥 Current Staff",
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+
+        # Chunked field adder to handle Discord's 1024 char field limit
+        def add_section(embed, title, members):
+            if not members:
+                embed.add_field(name=title, value="*None*", inline=False)
+                return
+            sorted_members = sorted(members, key=lambda x: x[0])
+            chunk = ""
+            first = True
+            for name, role in sorted_members:
+                line = f"• **{name}** — {role}\n"
+                if len(chunk) + len(line) > 1000:
+                    embed.add_field(
+                        name=title if first else f"{title} (cont.)",
+                        value=chunk.strip(),
+                        inline=False
+                    )
+                    chunk = ""
+                    first = False
+                chunk += line
+            if chunk:
+                embed.add_field(
+                    name=title if first else f"{title} (cont.)",
+                    value=chunk.strip(),
+                    inline=False
+                )
+
+        if academy_staff:
+            add_section(embed, f"🏫 Academy ({len(academy_staff)})", academy_staff)
+        if sixth_form_staff:
+            add_section(embed, f"🎓 Sixth Form ({len(sixth_form_staff)})", sixth_form_staff)
+        if other_staff:
+            add_section(embed, f"📋 Other ({len(other_staff)})", other_staff)
+
+        embed.set_footer(text=f"{len(staff_rows)} staff member(s) total")
+        await interaction.followup.send(embed=embed)
+
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send(f"❌ Sheet '{CURRENT_STAFF_SHEET}' not found!")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Unexpected error: {e}")
 
 
 # -------------------------------------------------
