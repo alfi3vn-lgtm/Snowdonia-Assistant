@@ -1979,47 +1979,60 @@ async def view_staff(interaction: discord.Interaction):
             else:
                 unmatched.append((name, role))
 
-        # Build embed
-        embed = discord.Embed(
-            title="👥 Current Staff",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-
+        # Build one big text block, role by role
+        lines = []
         total = 0
         for role in roles_order:
             members = sorted(staff_by_role.get(role, []))
             if not members:
                 continue
             total += len(members)
-
-            # Chunk if needed to stay under Discord's 1024 char field limit
-            chunk = ""
-            first = True
+            lines.append(f"__**{role}**__")
             for name in members:
-                line = f"• {name}\n"
-                if len(chunk) + len(line) > 1000:
-                    embed.add_field(
-                        name=f"**{role}**" if first else f"**{role}** (cont.)",
-                        value=chunk.strip(),
-                        inline=False
-                    )
-                    chunk = ""
-                    first = False
-                chunk += line
-            if chunk:
-                embed.add_field(
-                    name=f"**{role}**" if first else f"**{role}** (cont.)",
-                    value=chunk.strip(),
-                    inline=False
-                )
+                lines.append(f"• {name}")
+            lines.append("")  # blank line between roles
 
         if unmatched:
-            value = "\n".join(f"• {n} — {r}" for n, r in sorted(unmatched))
-            embed.add_field(name="❓ Unknown Role", value=value, inline=False)
+            lines.append("__**❓ Unknown Role**__")
+            for name, role in sorted(unmatched):
+                lines.append(f"• {name} — {role}")
+            lines.append("")
 
-        embed.set_footer(text=f"{total} staff member(s) total")
-        await interaction.followup.send(embed=embed)
+        full_text = "\n".join(lines).strip()
+
+        # Split into chunks of 4000 chars and send as separate embeds
+        chunks = []
+        current_chunk = ""
+        for line in full_text.split("\n"):
+            if len(current_chunk) + len(line) + 1 > 4000:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+            current_chunk += line + "\n"
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+
+        if not chunks:
+            await interaction.followup.send("❌ No current staff members found.")
+            return
+
+        # First embed has the title
+        first_embed = discord.Embed(
+            title="👥 Current Staff",
+            description=chunks[0],
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        first_embed.set_footer(text=f"{total} staff member(s) total")
+        await interaction.followup.send(embed=first_embed)
+
+        # Any overflow goes in continuation embeds
+        for i, chunk in enumerate(chunks[1:], start=2):
+            cont_embed = discord.Embed(
+                description=chunk,
+                color=discord.Color.blue()
+            )
+            cont_embed.set_footer(text=f"Page {i} • {total} staff member(s) total")
+            await interaction.followup.send(embed=cont_embed)
 
     except gspread.WorksheetNotFound:
         await interaction.followup.send(f"❌ Sheet '{CURRENT_STAFF_SHEET}' not found!")
