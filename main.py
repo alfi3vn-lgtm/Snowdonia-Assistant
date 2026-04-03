@@ -474,12 +474,12 @@ def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
         "Deputy Headteacher":        "[SLT]",
         "Assistant Headteacher":     "[SLT]",
         # Level heads
-        "Head of Upper Level":         "| HOLUpper",
-        "Deputy Head of Upper Level":  "| DHOLUpper",
-        "Head of Middle Level":        "| HOLMiddle",
-        "Deputy Head of Middle Level": "| DHOLMiddle",
-        "Head of Lower Level":         "| HOLLower",
-        "Deputy Head of Lower Level":  "| DHOLLower",
+        "Head of Upper Level":         "| HOUL",
+        "Deputy Head of Upper Level":  "| DHOUL",
+        "Head of Middle Level":        "| HOML",
+        "Deputy Head of Middle Level": "| DHOML",
+        "Head of Lower Level":         "| HOLL",
+        "Deputy Head of Lower Level":  "| DHOLL",
         # Year / SF heads
         "Head of Sixth Form":        "| HOSF",
         "Deputy Head of Sixth Form": "| DHOSF",
