@@ -262,17 +262,6 @@ EDIT_STAFF_SHEET    = "Edit Staff"
 ALL_STAFF_DATA_START = 5
 ALL_STAFF_NAME_COL   = 3
 
-# Current Staff sheet (columns are 0-indexed, data starts row 5):
-# Index 0 = A (unused/row ref)
-# Index 1 = B  Position
-# Index 2 = C  Staff Username (Roblox)
-# Index 3 = D  Teaching Name
-# Index 4 = E  Area
-# Index 5 = F  TL (Training Level)
-# Index 6 = G  LOA
-# Index 7 = H  Discord ID
-# Index 8 = I  Strikes
-# Index 9 = J  Attendance This Week
 CURRENT_STAFF_DATA_START     = 5
 CURRENT_STAFF_NAME_COL       = 3   # D — Teaching Name
 CURRENT_STAFF_ATTENDANCE_COL = 9   # J — Attendance This Week
@@ -289,6 +278,275 @@ FIELD_MAP = {
     "area":            ("Area",             "F6"),
     "discord_id":      ("Discord User ID",  "I6"),
 }
+
+
+# -------------------------------------------------
+#  DISCORD ROLE & NICKNAME CONFIG
+# -------------------------------------------------
+
+# Roblox-rank-named Discord roles (match ROLE_NAME_MAP values)
+DISCORD_RANK_ROLE_IDS: dict[str, int] = {
+    "Senior Deputy Headteacher": 1484861142907097108,
+    "Deputy Headteacher":        1484861834191437858,
+    "Assistant Headteacher":     1484861922313506939,
+    "Site Staff":                1484862019873148998,
+    "Head of Level":             1484862221644206230,
+    "Deputy Head of Level":      1484862355090309152,
+    "Head of Year":              1484862436061347983,
+    "Deputy Head of Year":       1484862545063051340,
+    "Teaching Staff":            1484862783626543185,
+}
+
+# Extra grouping / leadership roles
+DISCORD_EXTRA_ROLE_IDS: dict[str, int] = {
+    "Senior Leadership Team":  1484862178698727557,
+    "Year Leadership Team":    1484862740945174569,
+    "Staff":                   1484863012933210143,
+    "Sixth Form Leadership":   1485053144952995911,
+    "Year 11 Leadership":      1485053638400540742,
+    "Year 10 Leadership":      1485053691500429372,
+    "Year 9 Leadership":       1485053716859060436,
+    "Year 8 Leadership":       1485053745531195432,
+    "Year 7 Leadership":       1485053768939864254,
+}
+
+# All managed role IDs combined — used when clearing roles before re-applying
+ALL_MANAGED_ROLE_IDS: set[int] = (
+    set(DISCORD_RANK_ROLE_IDS.values()) | set(DISCORD_EXTRA_ROLE_IDS.values())
+)
+
+
+def get_discord_roles_for_sheet_role(sheet_role: str) -> list[int]:
+    """
+    Return the list of Discord role IDs that should be assigned
+    to a member hired/edited into `sheet_role`.
+    """
+    R = DISCORD_RANK_ROLE_IDS
+    E = DISCORD_EXTRA_ROLE_IDS
+    staff      = E["Staff"]
+    slt        = E["Senior Leadership Team"]
+    ylt        = E["Year Leadership Team"]
+    sf_lead    = E["Sixth Form Leadership"]
+    hol        = R["Head of Level"]
+    dhol       = R["Deputy Head of Level"]
+    hoy        = R["Head of Year"]
+    dhoy       = R["Deputy Head of Year"]
+    ts         = R["Teaching Staff"]
+    site       = R["Site Staff"]
+    aht        = R["Assistant Headteacher"]
+    dht        = R["Deputy Headteacher"]
+    sdht       = R["Senior Deputy Headteacher"]
+
+    mapping: dict[str, list[int]] = {
+        # SLT
+        "Senior Deputy Headteacher": [staff, slt, sdht],
+        "Deputy Headteacher":        [staff, slt, dht],
+        "Assistant Headteacher":     [staff, slt, aht],
+        # Level heads — Upper (Sixth Form)
+        "Head of Upper Level":         [staff, ylt, sf_lead, hol],
+        "Deputy Head of Upper Level":  [staff, ylt, sf_lead, dhol],
+        # Level heads — Middle (Y10+Y11)
+        "Head of Middle Level":        [staff, ylt, E["Year 11 Leadership"], E["Year 10 Leadership"], hol],
+        "Deputy Head of Middle Level": [staff, ylt, E["Year 11 Leadership"], E["Year 10 Leadership"], dhol],
+        # Level heads — Lower (Y7+Y8+Y9)
+        "Head of Lower Level":         [staff, ylt, E["Year 9 Leadership"], E["Year 8 Leadership"], E["Year 7 Leadership"], hol],
+        "Deputy Head of Lower Level":  [staff, ylt, E["Year 9 Leadership"], E["Year 8 Leadership"], E["Year 7 Leadership"], dhol],
+        # Year / SF heads
+        "Head of Sixth Form":          [staff, ylt, sf_lead, hoy],
+        "Deputy Head of Sixth Form":   [staff, ylt, sf_lead, dhoy],
+        "Head of Year 11":             [staff, ylt, E["Year 11 Leadership"], hoy],
+        "Deputy Head of Year 11":      [staff, ylt, E["Year 11 Leadership"], dhoy],
+        "Head of Year 10":             [staff, ylt, E["Year 10 Leadership"], hoy],
+        "Deputy Head of Year 10":      [staff, ylt, E["Year 10 Leadership"], dhoy],
+        "Head of Year 9":              [staff, ylt, E["Year 9 Leadership"], hoy],
+        "Deputy Head of Year 9":       [staff, ylt, E["Year 9 Leadership"], dhoy],
+        "Head of Year 8":              [staff, ylt, E["Year 8 Leadership"], hoy],
+        "Deputy Head of Year 8":       [staff, ylt, E["Year 8 Leadership"], dhoy],
+        "Head of Year 7":              [staff, ylt, E["Year 7 Leadership"], hoy],
+        "Deputy Head of Year 7":       [staff, ylt, E["Year 7 Leadership"], dhoy],
+        # Teaching / Site
+        "School Staff":                [staff, ts],
+        "Site Staff":                  [staff, site],
+        "Site Manager":                [staff, site],
+    }
+    return mapping.get(sheet_role, [staff])
+
+
+def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
+    """
+    Return the correctly formatted Discord nickname for a staff member
+    based on their sheet role and teaching name.
+    """
+    suffix_map: dict[str, str] = {
+        # SLT — use [SLT] tag
+        "Senior Deputy Headteacher": "[SLT]",
+        "Deputy Headteacher":        "[SLT]",
+        "Assistant Headteacher":     "[SLT]",
+        # Level heads
+        "Head of Upper Level":         "| HOLUpper",
+        "Deputy Head of Upper Level":  "| DHOLUpper",
+        "Head of Middle Level":        "| HOLMiddle",
+        "Deputy Head of Middle Level": "| DHOLMiddle",
+        "Head of Lower Level":         "| HOLLower",
+        "Deputy Head of Lower Level":  "| DHOLLower",
+        # Year / SF heads
+        "Head of Sixth Form":        "| HOSF",
+        "Deputy Head of Sixth Form": "| DHOSF",
+        "Head of Year 7":            "| HOY7",
+        "Deputy Head of Year 7":     "| DHOY7",
+        "Head of Year 8":            "| HOY8",
+        "Deputy Head of Year 8":     "| DHOY8",
+        "Head of Year 9":            "| HOY9",
+        "Deputy Head of Year 9":     "| DHOY9",
+        "Head of Year 10":           "| HOY10",
+        "Deputy Head of Year 10":    "| DHOY10",
+        "Head of Year 11":           "| HOY11",
+        "Deputy Head of Year 11":    "| DHOY11",
+    }
+
+    suffix = suffix_map.get(sheet_role)
+    if suffix is None:
+        # School Staff, Site Staff, Site Manager, Teaching Staff, etc. — plain name
+        return teaching_name
+
+    # SLT bracket style vs pipe style
+    if suffix.startswith("["):
+        return f"{teaching_name} {suffix}"
+    return f"{teaching_name} {suffix}"
+
+
+async def apply_discord_roles_and_nick(
+    guild: discord.Guild,
+    member: discord.Member,
+    sheet_role: str,
+    teaching_name: str,
+    *,
+    embed: discord.Embed | None = None,
+) -> None:
+    """
+    Remove all managed roles from `member`, assign the correct ones for
+    `sheet_role`, and update their nickname.  Appends status fields to
+    `embed` if provided.
+    """
+    # --- roles ---
+    desired_ids = get_discord_roles_for_sheet_role(sheet_role)
+    desired_role_objects = [
+        guild.get_role(rid) for rid in desired_ids
+        if guild.get_role(rid) is not None
+    ]
+
+    # Roles to remove: managed roles the member currently has
+    roles_to_remove = [r for r in member.roles if r.id in ALL_MANAGED_ROLE_IDS]
+
+    try:
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove, reason="Staff role update")
+        if desired_role_objects:
+            await member.add_roles(*desired_role_objects, reason=f"Hired/edited as {sheet_role}")
+        role_names = ", ".join(r.name for r in desired_role_objects) or "None"
+        if embed:
+            embed.add_field(name="Discord Roles", value=f"✅ Set: {role_names}", inline=False)
+    except discord.Forbidden:
+        if embed:
+            embed.add_field(name="Discord Roles", value="⚠️ Missing permissions to manage roles", inline=False)
+    except Exception as e:
+        if embed:
+            embed.add_field(name="Discord Roles", value=f"⚠️ Error: {e}", inline=False)
+
+    # --- nickname ---
+    new_nick = get_nickname_for_sheet_role(teaching_name, sheet_role)
+    # Discord nickname limit is 32 characters
+    new_nick = new_nick[:32]
+    try:
+        await member.edit(nick=new_nick, reason=f"Staff role: {sheet_role}")
+        if embed:
+            embed.add_field(name="Nickname", value=f"✅ Set to: `{new_nick}`", inline=False)
+    except discord.Forbidden:
+        if embed:
+            embed.add_field(name="Nickname", value="⚠️ Missing permissions to change nickname", inline=False)
+    except Exception as e:
+        if embed:
+            embed.add_field(name="Nickname", value=f"⚠️ Error: {e}", inline=False)
+
+
+async def clear_discord_roles_and_reset_nick(
+    guild: discord.Guild,
+    member: discord.Member,
+    roblox_username: str,
+    *,
+    embed: discord.Embed | None = None,
+) -> None:
+    """
+    Remove all managed roles and reset nickname to roblox username on removal.
+    """
+    roles_to_remove = [r for r in member.roles if r.id in ALL_MANAGED_ROLE_IDS]
+    try:
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove, reason="Staff removed")
+        if embed:
+            embed.add_field(name="Discord Roles", value="✅ All staff roles removed", inline=False)
+    except discord.Forbidden:
+        if embed:
+            embed.add_field(name="Discord Roles", value="⚠️ Missing permissions to manage roles", inline=False)
+    except Exception as e:
+        if embed:
+            embed.add_field(name="Discord Roles", value=f"⚠️ Error: {e}", inline=False)
+
+    # Reset nickname to Roblox username
+    nick = roblox_username[:32] if roblox_username else None
+    try:
+        await member.edit(nick=nick, reason="Staff removed")
+        if embed:
+            embed.add_field(name="Nickname", value=f"✅ Reset to: `{nick or 'cleared'}`", inline=False)
+    except discord.Forbidden:
+        if embed:
+            embed.add_field(name="Nickname", value="⚠️ Missing permissions to change nickname", inline=False)
+    except Exception as e:
+        if embed:
+            embed.add_field(name="Nickname", value=f"⚠️ Error: {e}", inline=False)
+
+
+async def get_discord_member_by_id(guild: discord.Guild, discord_id: str) -> discord.Member | None:
+    """Fetch a guild member by their Discord ID string. Returns None if not found."""
+    try:
+        uid = int(discord_id)
+        member = guild.get_member(uid)
+        if member is None:
+            member = await guild.fetch_member(uid)
+        return member
+    except Exception:
+        return None
+
+
+async def get_discord_id_for_staff(teaching_name: str) -> str | None:
+    """Look up a staff member's Discord ID (col H, index 7) by Teaching Name (col D, index 3)."""
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+            if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
+                discord_id = safe_get(row, 7)
+                return discord_id if discord_id != "N/A" else None
+    except Exception as e:
+        print(f"[Discord] Discord ID lookup error: {e}")
+    return None
+
+
+async def get_role_for_staff(teaching_name: str) -> str | None:
+    """Look up a staff member's Role (col B, index 1) by Teaching Name."""
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+            if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
+                role = safe_get(row, 1)
+                return role if role != "N/A" else None
+    except Exception as e:
+        print(f"[Discord] Role lookup error: {e}")
+    return None
+
 
 print("Starting bot...", flush=True)
 print(f"Token present: {bool(DISCORD_TOKEN)}", flush=True)
@@ -547,8 +805,8 @@ async def get_staff_teaching_name(discord_id: str):
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
         )
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
-            if len(row) > 7 and row[7].strip() == discord_id:   # col H = index 7
-                return row[CURRENT_STAFF_NAME_COL].strip()       # col D = index 3
+            if len(row) > 7 and row[7].strip() == discord_id:
+                return row[CURRENT_STAFF_NAME_COL].strip()
     except Exception as e:
         print(f"Error getting teaching name: {e}")
     return None
@@ -562,7 +820,7 @@ async def get_roblox_username_for_staff(teaching_name: str) -> str | None:
         )
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
-                username = safe_get(row, 2)   # col C = index 2 = Staff Username
+                username = safe_get(row, 2)
                 return username if username != "N/A" else None
     except Exception as e:
         print(f"[Roblox] Sheet username lookup error: {e}")
@@ -1196,7 +1454,7 @@ async def open_roles(interaction: discord.Interaction):
         role_counts: dict[str, int] = {}
         for row in current_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) > 1:
-                role = row[1].strip()   # col B = index 1 = Position
+                role = row[1].strip()
                 if role:
                     role_counts[role] = role_counts.get(role, 0) + 1
 
@@ -1334,6 +1592,7 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
             embed.add_field(name="New Value",     value=value,                            inline=True)
             embed.set_footer(text="Staff record has been updated")
 
+            # --- Roblox rank update if role changed ---
             if field == "role":
                 roblox_username = await get_roblox_username_for_staff(staff_name)
                 if roblox_username:
@@ -1344,6 +1603,46 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                         embed.add_field(name="Roblox Group", value=f"⚠️ {result}", inline=False)
                 else:
                     embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
+
+            # --- Discord role + nickname update ---
+            # We need to determine which fields changed to know what the
+            # current state of name + role is after the edit.
+            guild = interaction.guild
+            if guild:
+                # Resolve the staff member's Discord ID
+                if field == "discord_id":
+                    # The new discord ID is `value` itself
+                    target_discord_id = value
+                else:
+                    target_discord_id = await get_discord_id_for_staff(staff_name)
+
+                if target_discord_id and target_discord_id != "N/A":
+                    member = await get_discord_member_by_id(guild, target_discord_id)
+                    if member:
+                        # Determine the effective role and teaching name after this edit
+                        if field == "role":
+                            effective_role         = value
+                            effective_teaching_name = staff_name  # name hasn't changed
+                        elif field == "teaching_name":
+                            effective_teaching_name = value
+                            effective_role = await get_role_for_staff(staff_name)
+                        else:
+                            effective_teaching_name = staff_name
+                            effective_role = await get_role_for_staff(staff_name)
+
+                        if effective_role:
+                            await apply_discord_roles_and_nick(
+                                guild, member,
+                                effective_role,
+                                effective_teaching_name or staff_name,
+                                embed=embed,
+                            )
+                        else:
+                            embed.add_field(name="Discord", value="⚠️ Could not determine role for Discord update", inline=False)
+                    else:
+                        embed.add_field(name="Discord", value="⚠️ Member not found in this server", inline=False)
+                else:
+                    embed.add_field(name="Discord", value="⚠️ No Discord ID on file — skipped role/nick update", inline=False)
 
             await interaction.followup.send(embed=embed)
         else:
@@ -1528,7 +1827,7 @@ async def log_training(interaction: discord.Interaction, staff_name: str, traini
         current_level = None
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == staff_name.lower():
-                current_level = safe_get(row, 5, "").strip()   # col F = index 5 = TL
+                current_level = safe_get(row, 5, "").strip()
                 break
 
         if current_level is None:
@@ -1619,11 +1918,21 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
             embed.add_field(name="Role",            value=role,                    inline=True)
             embed.set_footer(text="Staff record has been created")
 
+            # --- Roblox rank ---
             success, result = await roblox_set_rank_by_sheet_role(roblox_username, role)
             if success:
                 embed.add_field(name="Roblox Group", value=f"✅ Ranked to **{result}**", inline=False)
             else:
                 embed.add_field(name="Roblox Group", value=f"⚠️ {result}", inline=False)
+
+            # --- Discord roles + nickname ---
+            guild = interaction.guild
+            if guild:
+                await apply_discord_roles_and_nick(
+                    guild, discord_account,
+                    role, teaching_name,
+                    embed=embed,
+                )
 
             # Refresh the staff names cache so the new hire appears in autocomplete
             refresh_staff_names_cache()
@@ -1648,8 +1957,9 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
     await interaction.response.defer()
     current_date = datetime.now().strftime("%Y-%m-%d")
 
-    # Look up Roblox username from Current Staff BEFORE removing
-    roblox_username = await get_roblox_username_for_staff(staff_name)
+    # Look up Roblox username and Discord ID BEFORE removing from sheet
+    roblox_username  = await get_roblox_username_for_staff(staff_name)
+    target_discord_id = await get_discord_id_for_staff(staff_name)
 
     params = {
         "action":          "removestaff",
@@ -1668,7 +1978,7 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             embed.add_field(name="Reason",         value=reason,       inline=False)
             embed.set_footer(text="Staff record has been updated")
 
-            # Demote to rank 1 on Roblox
+            # --- Roblox demotion ---
             if roblox_username:
                 success, err = await roblox_demote_to_rank_1(roblox_username)
                 if success:
@@ -1677,6 +1987,21 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
                     embed.add_field(name="Roblox Group", value=f"⚠️ {err}", inline=False)
             else:
                 embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
+
+            # --- Discord roles + nickname reset ---
+            guild = interaction.guild
+            if guild and target_discord_id and target_discord_id != "N/A":
+                member = await get_discord_member_by_id(guild, target_discord_id)
+                if member:
+                    await clear_discord_roles_and_reset_nick(
+                        guild, member,
+                        roblox_username or staff_name,
+                        embed=embed,
+                    )
+                else:
+                    embed.add_field(name="Discord", value="⚠️ Member not found in this server", inline=False)
+            else:
+                embed.add_field(name="Discord", value="⚠️ No Discord ID on file — skipped role/nick update", inline=False)
 
             # Refresh cache so removed staff no longer appears in autocomplete
             refresh_staff_names_cache()
@@ -1707,7 +2032,7 @@ async def profile(interaction: discord.Interaction):
         staff_row_idx  = None
         staff_row_data = None
         for i, row in enumerate(all_data[CURRENT_STAFF_DATA_START - 1:], start=CURRENT_STAFF_DATA_START):
-            if len(row) > 7 and row[7].strip() == user_discord_id:   # col H = index 7 = Discord ID
+            if len(row) > 7 and row[7].strip() == user_discord_id:
                 staff_row_idx  = i
                 staff_row_data = row
                 break
@@ -1719,24 +2044,23 @@ async def profile(interaction: discord.Interaction):
             )
             return
 
-        teaching_name = safe_get(staff_row_data, 3)        # col D = Teaching Name
-        loa_value     = safe_get(staff_row_data, 6)        # col G = LOA
-        strikes_value = safe_get(staff_row_data, 8, "0")   # col I = Strikes
+        teaching_name = safe_get(staff_row_data, 3)
+        loa_value     = safe_get(staff_row_data, 6)
+        strikes_value = safe_get(staff_row_data, 8, "0")
 
         embed = discord.Embed(title="Your Staff Profile", description=f"**{teaching_name}**", color=discord.Color.blue())
-        embed.add_field(name="Role",            value=safe_get(staff_row_data, 1),      inline=True)   # col B
-        embed.add_field(name="Roblox Username", value=safe_get(staff_row_data, 2),      inline=True)   # col C
-        embed.add_field(name="Area",            value=safe_get(staff_row_data, 4),      inline=True)   # col E
-        embed.add_field(name="Training Level",  value=safe_get(staff_row_data, 5, "0"), inline=True)   # col F
+        embed.add_field(name="Role",            value=safe_get(staff_row_data, 1),      inline=True)
+        embed.add_field(name="Roblox Username", value=safe_get(staff_row_data, 2),      inline=True)
+        embed.add_field(name="Area",            value=safe_get(staff_row_data, 4),      inline=True)
+        embed.add_field(name="Training Level",  value=safe_get(staff_row_data, 5, "0"), inline=True)
         embed.add_field(name="LOA",             value=loa_value,                        inline=True)
         embed.add_field(name="Strikes",         value=strikes_value,                    inline=True)
 
-        # Fetch cell notes directly from Current Staff using the already-found row index
         try:
             if staff_row_idx:
                 ws = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
 
-                strike_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 9))   # col I = Strikes
+                strike_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 9))
                 if strike_cell.note:
                     lines = [l.strip() for l in strike_cell.note.strip().split('\n') if l.strip()]
                     formatted = []
@@ -1750,13 +2074,13 @@ async def profile(interaction: discord.Interaction):
                         embed.add_field(name="Strike Reasons", value="\n".join(formatted), inline=False)
 
                 if loa_value != "N/A":
-                    loa_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 7))   # col G = LOA
+                    loa_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 7))
                     if loa_cell.note:
                         embed.add_field(name="LOA Reason", value=loa_cell.note, inline=False)
         except Exception as e:
             print(f"Error fetching cell notes: {e}")
 
-        embed.add_field(name="Attendance", value=f"{safe_get(staff_row_data, 9, '0')} sessions", inline=False)   # col J
+        embed.add_field(name="Attendance", value=f"{safe_get(staff_row_data, 9, '0')} sessions", inline=False)
         embed.set_footer(text=f"Discord ID: {user_discord_id}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -1822,26 +2146,25 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
             await interaction.followup.send(f"Staff member **{staff_name}** not found.")
             return
 
-        strikes_value = safe_get(staff_row_data, 8, "0")   # col I = Strikes
-        loa_value     = safe_get(staff_row_data, 6)        # col G = LOA
-        discord_id    = safe_get(staff_row_data, 7)        # col H = Discord ID
+        strikes_value = safe_get(staff_row_data, 8, "0")
+        loa_value     = safe_get(staff_row_data, 6)
+        discord_id    = safe_get(staff_row_data, 7)
 
         embed = discord.Embed(title=f"Staff Information: {staff_name}", color=discord.Color.blue())
-        embed.add_field(name="Role",                value=safe_get(staff_row_data, 1),      inline=True)   # col B
-        embed.add_field(name="Roblox Username",     value=safe_get(staff_row_data, 2),      inline=True)   # col C
-        embed.add_field(name="Area",                value=safe_get(staff_row_data, 4),      inline=True)   # col E
-        embed.add_field(name="TL (Training Level)", value=safe_get(staff_row_data, 5, "0"), inline=True)   # col F
+        embed.add_field(name="Role",                value=safe_get(staff_row_data, 1),      inline=True)
+        embed.add_field(name="Roblox Username",     value=safe_get(staff_row_data, 2),      inline=True)
+        embed.add_field(name="Area",                value=safe_get(staff_row_data, 4),      inline=True)
+        embed.add_field(name="TL (Training Level)", value=safe_get(staff_row_data, 5, "0"), inline=True)
         embed.add_field(name="LOA",                 value=loa_value,                        inline=True)
         embed.add_field(name="Discord",             value=f"<@{discord_id}>" if discord_id != "N/A" else "Not set", inline=True)
         embed.add_field(name="Strikes",             value=strikes_value,                    inline=True)
-        embed.add_field(name="Attendance",          value=f"{safe_get(staff_row_data, 9, '0')} sessions", inline=True)   # col J
+        embed.add_field(name="Attendance",          value=f"{safe_get(staff_row_data, 9, '0')} sessions", inline=True)
 
-        # Fetch cell notes directly from Current Staff using the already-found row index
         try:
             if staff_row_idx:
                 ws = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
 
-                strike_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 9))   # col I = Strikes
+                strike_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 9))
                 if strike_cell.note:
                     lines = [l.strip() for l in strike_cell.note.strip().split('\n') if l.strip()]
                     formatted = []
@@ -1855,7 +2178,7 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
                         embed.add_field(name="Strike Reasons", value="\n".join(formatted), inline=False)
 
                 if loa_value != "N/A":
-                    loa_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 7))   # col G = LOA
+                    loa_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 7))
                     if loa_cell.note:
                         embed.add_field(name="LOA Reason", value=loa_cell.note, inline=False)
         except Exception as e:
@@ -1888,8 +2211,8 @@ async def check_attendance(interaction: discord.Interaction):
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) <= 9:
                 continue
-            name           = row[3].strip()    # col D = Teaching Name
-            attendance_raw = row[9].strip()    # col J = Attendance This Week
+            name           = row[3].strip()
+            attendance_raw = row[9].strip()
             if not name or not attendance_raw:
                 continue
             try:
@@ -1952,8 +2275,8 @@ async def view_staff(interaction: discord.Interaction):
         unmatched: list[tuple[str, str]] = []
 
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
-            name = safe_get(row, CURRENT_STAFF_NAME_COL, "").strip()   # col D
-            role = safe_get(row, 1, "").strip()                         # col B
+            name = safe_get(row, CURRENT_STAFF_NAME_COL, "").strip()
+            role = safe_get(row, 1, "").strip()
             if not name or name == "N/A":
                 continue
             if role in staff_by_role:
@@ -2030,7 +2353,6 @@ async def reset_attendance(interaction: discord.Interaction):
         def _reset():
             worksheet  = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
             last_row   = worksheet.row_count
-            # col J = column 10 (1-indexed) = Attendance This Week
             cell_range = worksheet.range(f"J{CURRENT_STAFF_DATA_START}:J{last_row}")
             for cell in cell_range:
                 cell.value = 0
@@ -2151,6 +2473,14 @@ async def diagnose_roblox(interaction: discord.Interaction):
     output.append("\n[5] ROLE_NAME_MAP entries...")
     for sheet_role, roblox_rank in ROLE_NAME_MAP.items():
         output.append(f"  {sheet_role!r} → {roblox_rank!r}")
+
+    output.append("\n[6] Discord role ID config...")
+    output.append("  Rank roles:")
+    for name, rid in DISCORD_RANK_ROLE_IDS.items():
+        output.append(f"    {name}: {rid}")
+    output.append("  Extra roles:")
+    for name, rid in DISCORD_EXTRA_ROLE_IDS.items():
+        output.append(f"    {name}: {rid}")
 
     output.append("\n" + "=" * 50)
     full_output = "\n".join(output)
