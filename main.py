@@ -2812,7 +2812,7 @@ class NameRequestView(discord.ui.View):
                 description=(
                     f"Your request to change your teaching name to **{self.requested_name}** has been approved.\n\n"
                     f"Your profile and Discord nickname have been updated accordingly. "
-                    f"If you notice any discrepancies, please contact an administrator."
+                    f"If you notice any discrepancies, please contact a member of the Senior Leadership Team."
                 ),
                 color=discord.Color.green(),
                 timestamp=datetime.now()
@@ -2940,6 +2940,129 @@ async def request_name(interaction: discord.Interaction, new_name: str):
         f"✅ Your name change request to **{new_name}** has been submitted and is awaiting approval.",
         ephemeral=True
     )
+
+# -------------------------------------------------
+#  STUDENT NAME REQUEST SYSTEM
+# -------------------------------------------------
+
+# The channel where Senior Leadership will see the buttons
+STUDENT_NAME_LOG_ID = 1489698033573826601
+
+class StudentNameRequestView(discord.ui.View):
+    def __init__(self, requester_id: int, requested_name: str):
+        super().__init__(timeout=None) # Keeps buttons working after bot restart
+        self.requester_id = requester_id
+        self.requested_name = requested_name
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="stud_name_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        guild = interaction.guild
+        member = guild.get_member(self.requester_id)
+
+        # 1. Update Nickname
+        nickname_success = False
+        if member:
+            try:
+                await member.edit(nick=self.requested_name, reason=f"Student name request approved by {interaction.user.display_name}")
+                nickname_success = True
+            except discord.Forbidden:
+                await interaction.followup.send("⚠️ I don't have permission to change that user's nickname.", ephemeral=True)
+            except Exception as e:
+                await interaction.followup.send(f"⚠️ Error updating nickname: {e}", ephemeral=True)
+
+        # 2. Send the Specific Approval DM
+        if member:
+            try:
+                dm_embed = discord.Embed(
+                    title="Name Request Approved",
+                    description=(
+                        f"Your request to change your display name to **{self.requested_name}** has been approved.\n\n"
+                        f"Your Discord nickname has been updated accordingly. If you notice any discrepancies, "
+                        f"please contact a member of the Senior Leadership Team."
+                    ),
+                    color=discord.Color.green()
+                )
+                await member.send(embed=dm_embed)
+            except discord.Forbidden:
+                pass # User has DMs off
+
+        # 3. Update the original staff message
+        for child in self.children:
+            child.disabled = True
+        
+        final_embed = interaction.message.embeds[0]
+        final_embed.title = "✅ Student Name Request Approved"
+        final_embed.color = discord.Color.green()
+        final_embed.set_footer(text=f"Approved by {interaction.user.display_name}")
+        
+        await interaction.message.edit(embed=final_embed, view=self)
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="stud_name_deny")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        guild = interaction.guild
+        member = guild.get_member(self.requester_id)
+
+        # 1. Send the Specific Denial DM
+        if member:
+            try:
+                dm_embed = discord.Embed(
+                    title="Name Request Unsuccessful",
+                    description=(
+                        f"Thank you for submitting your name change request to **{self.requested_name}**.\n\n"
+                        f"Unfortunately, your request has not been approved at this time. If you believe this is an error "
+                        f"or would like further clarification, please reach out to a member of the Senior Leadership Team."
+                    ),
+                    color=discord.Color.red()
+                )
+                await member.send(embed=dm_embed)
+            except discord.Forbidden:
+                pass
+
+        # 2. Update the original staff message
+        for child in self.children:
+            child.disabled = True
+
+        final_embed = interaction.message.embeds[0]
+        final_embed.title = "❌ Student Name Request Denied"
+        final_embed.color = discord.Color.red()
+        final_embed.set_footer(text=f"Denied by {interaction.user.display_name}")
+
+        await interaction.message.edit(embed=final_embed, view=self)
+
+@bot.tree.command(name="requestdisplayname", description="Request a change to your student display name")
+@app_commands.describe(new_name="The name you would like to be displayed as")
+async def request_display_name(interaction: discord.Interaction, new_name: str):
+    # Ensure name isn't too long for Discord
+    if len(new_name) > 32:
+        return await interaction.response.send_message("❌ Names must be under 32 characters.", ephemeral=True)
+
+    log_channel = bot.get_channel(STUDENT_NAME_LOG_ID)
+    if not log_channel:
+        return await interaction.response.send_message("❌ Log channel not found.", ephemeral=True)
+
+    # Embed for the Staff Channel
+    request_embed = discord.Embed(
+        title="🎓 Student Name Change Request",
+        description=f"A student has requested a name change.",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    request_embed.add_field(name="Student", value=interaction.user.mention, inline=True)
+    request_embed.add_field(name="Current Nickname", value=interaction.user.display_name, inline=True)
+    request_embed.add_field(name="Requested Name", value=f"`{new_name}`", inline=False)
+    request_embed.set_footer(text=f"User ID: {interaction.user.id}")
+
+    view = StudentNameRequestView(
+        requester_id=interaction.user.id,
+        requested_name=new_name
+    )
+
+    await log_channel.send(embed=request_embed, view=view)
+    await interaction.response.send_message("✅ Your request has been sent to the Senior Leadership Team.", ephemeral=True)
 
 
 # -------------------------------------------------
