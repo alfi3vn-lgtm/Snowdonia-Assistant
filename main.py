@@ -2746,6 +2746,202 @@ async def diagnose_roblox(interaction: discord.Interaction):
 
 
 # -------------------------------------------------
+#  NAME REQUEST SYSTEM
+# -------------------------------------------------
+
+NAME_REQUEST_CHANNEL_ID = 1489690329907990547
+
+class NameRequestView(discord.ui.View):
+    def __init__(self, requester_id: int, requested_name: str, current_name: str, sheet_role: str):
+        super().__init__(timeout=None)
+        self.requester_id   = requester_id
+        self.requested_name = requested_name
+        self.current_name   = current_name
+        self.sheet_role     = sheet_role
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="namereq_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        guild  = interaction.guild
+        member = await get_discord_member_by_id(guild, str(self.requester_id))
+
+        embed = discord.Embed(
+            title="✅ Name Request Approved",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Staff Member", value=f"<@{self.requester_id}>", inline=True)
+        embed.add_field(name="Old Name",     value=self.current_name,          inline=True)
+        embed.add_field(name="New Name",     value=self.requested_name,        inline=True)
+
+        # Update nickname on Discord
+        if member and self.sheet_role:
+            new_nick = get_nickname_for_sheet_role(self.requested_name, self.sheet_role)[:32]
+            try:
+                await member.edit(nick=new_nick, reason=f"Name request approved by {interaction.user.display_name}")
+                embed.add_field(name="Nickname", value=f"✅ Updated to `{new_nick}`", inline=False)
+            except discord.Forbidden:
+                embed.add_field(name="Nickname", value="⚠️ Could not update nickname (missing permissions)", inline=False)
+            except Exception as e:
+                embed.add_field(name="Nickname", value=f"⚠️ Error: {e}", inline=False)
+        else:
+            embed.add_field(name="Nickname", value="⚠️ Could not find member in server", inline=False)
+
+        # Update teaching name in sheet via Apps Script
+        params = {
+            "action":    "edit",
+            "staffName": self.current_name,
+            "field":     "teaching_name",
+            "cell":      "E6",
+            "value":     self.requested_name,
+        }
+        try:
+            status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
+            if status == 200 and "error" not in response_text.lower():
+                embed.add_field(name="Sheet", value="✅ Teaching name updated in sheet", inline=False)
+            else:
+                embed.add_field(name="Sheet", value=f"⚠️ Sheet update failed: {response_text[:200]}", inline=False)
+        except Exception as e:
+            embed.add_field(name="Sheet", value=f"⚠️ Sheet error: {e}", inline=False)
+
+        # DM the requester
+        try:
+            dm_embed = discord.Embed(
+                title="Name Request Approved",
+                description=(
+                    f"Your request to change your teaching name to **{self.requested_name}** has been approved.\n\n"
+                    f"Your profile and Discord nickname have been updated accordingly. "
+                    f"If you notice any discrepancies, please contact an administrator."
+                ),
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            dm_embed.set_footer(text="Winstree Academy Staff Portal")
+            if member:
+                await member.send(embed=dm_embed)
+        except Exception:
+            pass  # DM failed — member may have DMs disabled
+
+        embed.set_footer(text=f"Approved by {interaction.user.display_name}")
+
+        # Disable both buttons on the original message
+        for child in self.children:
+            child.disabled = True
+        await interaction.message.edit(embed=interaction.message.embeds[0], view=self)
+        await interaction.followup.send(embed=embed, ephemeral=False)
+
+        # Refresh staff cache
+        refresh_staff_names_cache()
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="namereq_deny")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        guild  = interaction.guild
+        member = await get_discord_member_by_id(guild, str(self.requester_id))
+
+        # DM the requester
+        dm_sent = False
+        try:
+            dm_embed = discord.Embed(
+                title="Name Request Unsuccessful",
+                description=(
+                    f"Thank you for submitting your name change request to **{self.requested_name}**.\n\n"
+                    f"Unfortunately, your request has not been approved at this time. "
+                    f"If you believe this is an error or would like further clarification, "
+                    f"please reach out to a member of the Senior Leadership Team."
+                ),
+                color=discord.Color.red(),
+                timestamp=datetime.now()
+            )
+            dm_embed.set_footer(text="Winstree Academy Staff Portal")
+            if member:
+                await member.send(embed=dm_embed)
+                dm_sent = True
+        except Exception:
+            pass
+
+        # Update the original request embed to show it was denied
+        denied_embed = discord.Embed(
+            title="❌ Name Request Denied",
+            color=discord.Color.red(),
+            timestamp=datetime.now()
+        )
+        denied_embed.add_field(name="Staff Member",     value=f"<@{self.requester_id}>",  inline=True)
+        denied_embed.add_field(name="Requested Name",   value=self.requested_name,         inline=True)
+        denied_embed.add_field(name="DM Sent",          value="✅ Yes" if dm_sent else "⚠️ Could not DM (DMs may be disabled)", inline=False)
+        denied_embed.set_footer(text=f"Denied by {interaction.user.display_name}")
+
+        # Disable both buttons
+        for child in self.children:
+            child.disabled = True
+        await interaction.message.edit(embed=interaction.message.embeds[0], view=self)
+        await interaction.followup.send(embed=denied_embed, ephemeral=False)
+
+
+@bot.tree.command(name="requestname", description="Request a change to your teaching name")
+@app_commands.describe(new_name="The new teaching name you'd like (e.g. Miss J. Smith)")
+@cooldown()
+async def request_name(interaction: discord.Interaction, new_name: str):
+    await interaction.response.defer(ephemeral=True)
+
+    # Look up their current teaching name and role from the sheet
+    discord_id_str = str(interaction.user.id)
+    current_name   = await get_staff_teaching_name(discord_id_str)
+    sheet_role     = None
+
+    if not current_name:
+        await interaction.followup.send(
+            "❌ Your Discord account isn't linked to a staff profile. Please contact an administrator.",
+            ephemeral=True
+        )
+        return
+
+    # Get their role for nickname formatting
+    sheet_role = await get_role_for_staff(current_name)
+
+    # Send the request to the approvals channel
+    channel = bot.get_channel(NAME_REQUEST_CHANNEL_ID)
+    if not channel:
+        await interaction.followup.send(
+            "❌ Could not find the name request channel. Please contact an administrator.",
+            ephemeral=True
+        )
+        return
+
+    request_embed = discord.Embed(
+        title="📋 Teaching Name Change Request",
+        color=discord.Color.orange(),
+        timestamp=datetime.now()
+    )
+    request_embed.add_field(name="Staff Member",   value=interaction.user.mention, inline=True)
+    request_embed.add_field(name="Current Name",   value=current_name,             inline=True)
+    request_embed.add_field(name="Requested Name", value=new_name,                 inline=True)
+    request_embed.add_field(name="Role",           value=sheet_role or "Unknown",  inline=True)
+    request_embed.add_field(
+        name="Nickname Preview",
+        value=f"`{get_nickname_for_sheet_role(new_name, sheet_role)[:32]}`" if sheet_role else "*Unknown — role not found*",
+        inline=True
+    )
+    request_embed.set_footer(text=f"Discord ID: {discord_id_str}")
+
+    view = NameRequestView(
+        requester_id   = interaction.user.id,
+        requested_name = new_name,
+        current_name   = current_name,
+        sheet_role     = sheet_role or "",
+    )
+
+    await channel.send(embed=request_embed, view=view)
+
+    await interaction.followup.send(
+        f"✅ Your name change request to **{new_name}** has been submitted and is awaiting approval.",
+        ephemeral=True
+    )
+
+
+# -------------------------------------------------
 #  TEXT COMMAND FALLBACK
 # -------------------------------------------------
 @bot.command(name='readsheet')
