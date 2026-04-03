@@ -2022,12 +2022,35 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
                     embed=embed,
                 )
 
-            # Refresh the staff names cache so the new hire appears in autocomplete
+            # --- Welcome DM ---
+            try:
+                await discord_account.send(
+                    "## ❗ | Congratulations on Your Appointment at Winstree Academy\n"
+                    "We are pleased to welcome you to the staff team at Winstree Academy.\n\n"
+                    "***__Important Information__***\n"
+                    "- You are required to complete your Initial Teacher Training within one week of receiving this message.\n"
+                    "- All staff members are expected to attend four sessions per week (Sunday–Saturday).\n"
+                    "- High standards of grammar, punctuation, and spelling (SPaG) must be maintained at all times while on school grounds.\n"
+                    "- Staff sessions begin at 19:45 (UK time) and conclude at 21:10.\n\n"
+                    "Your teaching name and assigned roles have already been recorded. Please run /profile in the server to review your details.\n\n"
+                    "We look forward to your attendance at today's session, commencing at 19:45 BST in the briefing room.\n\n"
+                    "*Senior Leadership Team*\n"
+                    "**Winstree Academy**"
+                )
+                embed.add_field(name="Welcome DM", value="✅ Sent", inline=False)
+            except discord.Forbidden:
+                embed.add_field(name="Welcome DM", value="⚠️ Could not send DM (user may have DMs disabled)", inline=False)
+            except Exception as e:
+                embed.add_field(name="Welcome DM", value=f"⚠️ DM error: {e}", inline=False)
+
+            # --- Refresh cache ---
             refresh_staff_names_cache()
 
             await interaction.followup.send(embed=embed)
+
         else:
             await interaction.followup.send(f"Apps Script error (HTTP {status}):\n```{response_text[:500]}```")
+
     except aiohttp.ClientError as e:
         await interaction.followup.send(f"Could not reach Apps Script: {e}")
     except Exception as e:
