@@ -2881,7 +2881,7 @@ class NameRequestView(discord.ui.View):
 
 
 @bot.tree.command(name="requestname", description="Request a change to your teaching name")
-@app_commands.describe(new_name="The new teaching name you'd like (e.g. Miss J. Smith)")
+@app_commands.describe(new_name="The new teaching name you'd like (e.g. Miss Z Parker). Ensure you type the full name, initials will be denied.")
 @cooldown()
 async def request_name(interaction: discord.Interaction, new_name: str):
     await interaction.response.defer(ephemeral=True)
