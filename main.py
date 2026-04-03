@@ -3247,8 +3247,8 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy — Staff Appli
     )
 
     teaching_name = discord.ui.TextInput(
-        label="Desired Teaching Name",
-        placeholder="e.g. Miss Z Parker",
+        label="Desired Teaching Name - Full name required or will be denied.",
+        placeholder="e.g. Miss Zoe Parker",
         required=True,
         max_length=60,
     )
@@ -3271,7 +3271,10 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy — Staff Appli
 
         log_channel = interaction.client.get_channel(APPLICATION_LOG_CHANNEL_ID)
         if not log_channel:
-            await interaction.followup.send("❌ Could not find the application log channel. Please contact an administrator.", ephemeral=True)
+            await interaction.followup.send(
+                "❌ Could not find the application log channel. Please contact an administrator.",
+                ephemeral=True
+            )
             return
 
         embed = discord.Embed(
@@ -3279,12 +3282,12 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy — Staff Appli
             color=discord.Color.orange(),
             timestamp=datetime.now()
         )
-        embed.add_field(name="Applicant",          value=interaction.user.mention,  inline=True)
-        embed.add_field(name="Discord ID",         value=interaction.user.id,       inline=True)
-        embed.add_field(name="Roblox Username",    value=self.roblox_username.value, inline=True)
-        embed.add_field(name="Desired Teaching Name", value=self.teaching_name.value, inline=True)
-        embed.add_field(name="Age Range",          value=self.age_range,            inline=True)
-        embed.add_field(name="Why do you want to be staff?", value=self.reason.value, inline=False)
+        embed.add_field(name="Applicant",             value=interaction.user.mention,   inline=True)
+        embed.add_field(name="Discord ID",            value=interaction.user.id,        inline=True)
+        embed.add_field(name="Roblox Username",       value=self.roblox_username.value, inline=True)
+        embed.add_field(name="Desired Teaching Name", value=self.teaching_name.value,   inline=True)
+        embed.add_field(name="Age Range",             value=self.age_range,             inline=True)
+        embed.add_field(name="Why do you want to be staff?", value=self.reason.value,  inline=False)
         embed.set_footer(text=f"User ID: {interaction.user.id}")
 
         view = ApplicationReviewView(
@@ -3322,7 +3325,6 @@ class AgeRangeSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         age_range = self.values[0]
 
-        # U9 hard block
         if age_range == "U9":
             await interaction.response.send_message(
                 "❌ You must be aged 9 or over to apply for a staff position at Winstree Academy.",
@@ -3359,14 +3361,20 @@ class ApplicationReviewView(discord.ui.View):
         except Exception:
             pass
 
+        # --- Determine area based on age range ---
+        if self.age_range in ("9-12", "13-15", "16-17"):
+            area = "Academy"
+        else:  # 18-20 and 21+
+            area = "Sixth Form"
+
         # --- Write to Google Sheet via Apps Script ---
         sheet_status = ""
         params = {
             "action":        "hire",
             "teachingName":  self.teaching_name,
             "staffUsername": self.roblox_username,
-            "area":          "Academy",        # default — can be edited later with /edit
-            "position":      "School Staff",   # default entry role
+            "area":          area,
+            "position":      "School Staff",
             "discordId":     str(self.applicant_id),
         }
         try:
@@ -3398,9 +3406,10 @@ class ApplicationReviewView(discord.ui.View):
         original_embed = interaction.message.embeds[0]
         original_embed.title = "✅ Application Accepted"
         original_embed.color = discord.Color.green()
-        original_embed.add_field(name="Sheet",  value=sheet_status, inline=False)
-        original_embed.add_field(name="DM",     value=dm_status,    inline=False)
-        original_embed.add_field(name="Reviewed By", value=interaction.user.mention, inline=False)
+        original_embed.add_field(name="Area Assigned", value=area,                      inline=True)
+        original_embed.add_field(name="Sheet",         value=sheet_status,              inline=False)
+        original_embed.add_field(name="DM",            value=dm_status,                 inline=False)
+        original_embed.add_field(name="Reviewed By",   value=interaction.user.mention,  inline=False)
 
         await interaction.message.edit(embed=original_embed, view=self)
         refresh_staff_names_cache()
@@ -3436,7 +3445,7 @@ class ApplicationReviewView(discord.ui.View):
         original_embed = interaction.message.embeds[0]
         original_embed.title = "❌ Application Denied"
         original_embed.color = discord.Color.red()
-        original_embed.add_field(name="DM",          value=dm_status,              inline=False)
+        original_embed.add_field(name="DM",          value=dm_status,               inline=False)
         original_embed.add_field(name="Reviewed By", value=interaction.user.mention, inline=False)
 
         await interaction.message.edit(embed=original_embed, view=self)
