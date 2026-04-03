@@ -240,12 +240,12 @@ ROLE_NAME_MAP = {
     "Head of Middle Level":          "Head of Level",
     "Head of Upper Level":           "Head of Level",
     "Site Staff":                    "Site Staff",
-    "Site Executive":                "Site Operations Executive",
+    "Site Manager":                  "Site Manager",
     "Assistant Headteacher":         "Assistant Headteacher",
     "Deputy Headteacher":            "Deputy Headteacher",
+    "Senior Deputy Headteacher":     "Senior Deputy Headteacher",
     "Headteacher":                   "Headteacher",
     "Executive Headteacher":         "Executive Headteacher",
-    "Chief Education Officer":       "Chief Education Officer",
 }
 
 # Roles with unlimited openings — everything else has exactly 1 spot
