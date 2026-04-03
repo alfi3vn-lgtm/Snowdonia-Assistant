@@ -2933,7 +2933,8 @@ async def request_name(interaction: discord.Interaction, new_name: str):
         sheet_role     = sheet_role or "",
     )
 
-    await channel.send(embed=request_embed, view=view)
+    # Add content="@here" to trigger the notification
+    await channel.send(content="@here", embed=request_embed, view=view)
 
     await interaction.followup.send(
         f"✅ Your name change request to **{new_name}** has been submitted and is awaiting approval.",
