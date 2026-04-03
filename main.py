@@ -2509,6 +2509,162 @@ async def slash_ping(interaction: discord.Interaction):
 async def slash_hello(interaction: discord.Interaction):
     await interaction.response.send_message('Goodbye')
 
+# -------------------------------------------------
+#  /syncallstaff
+# -------------------------------------------------
+@bot.tree.command(name="syncallstaff", description="[ADMIN] Sync all staff Discord roles, nicknames and Roblox ranks from the sheet")
+@app_commands.describe(dry_run="If True, shows what would change without actually changing anything")
+@cooldown()
+async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False):
+    await interaction.response.defer(ephemeral=True)
+
+    if not spreadsheet:
+        await interaction.followup.send("❌ Google Sheets is not connected.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    if not guild:
+        await interaction.followup.send("❌ Must be run inside a server.", ephemeral=True)
+        return
+
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to read sheet: {e}", ephemeral=True)
+        return
+
+    rows = [
+        row for row in all_data[CURRENT_STAFF_DATA_START - 1:]
+        if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip()
+    ]
+
+    if not rows:
+        await interaction.followup.send("❌ No staff found in the sheet.", ephemeral=True)
+        return
+
+    total        = len(rows)
+    success_disc = 0
+    failed_disc  = 0
+    success_rbx  = 0
+    failed_rbx   = 0
+    skipped      = 0
+    details      = []  # per-person summary lines
+
+    await interaction.followup.send(
+        f"{'🔍 [DRY RUN] ' if dry_run else ''}⏳ Syncing **{total}** staff members... this may take a while.",
+        ephemeral=True
+    )
+
+    for row in rows:
+        teaching_name   = safe_get(row, CURRENT_STAFF_NAME_COL)
+        sheet_role      = safe_get(row, 1)
+        roblox_username = safe_get(row, 2)
+        discord_id_str  = safe_get(row, 7)
+
+        if sheet_role == "N/A" or not sheet_role:
+            details.append(f"⚠️ **{teaching_name}** — skipped (no role in sheet)")
+            skipped += 1
+            continue
+
+        line_parts = [f"**{teaching_name}** ({sheet_role})"]
+
+        # --- Discord ---
+        if discord_id_str and discord_id_str != "N/A":
+            member = await get_discord_member_by_id(guild, discord_id_str)
+            if member:
+                if not dry_run:
+                    try:
+                        desired_ids = get_discord_roles_for_sheet_role(sheet_role)
+                        desired_role_objects = [
+                            guild.get_role(rid) for rid in desired_ids
+                            if guild.get_role(rid) is not None
+                        ]
+                        roles_to_remove = [r for r in member.roles if r.id in ALL_MANAGED_ROLE_IDS]
+                        if roles_to_remove:
+                            await member.remove_roles(*roles_to_remove, reason="syncallstaff")
+                        if desired_role_objects:
+                            await member.add_roles(*desired_role_objects, reason="syncallstaff")
+                        new_nick = get_nickname_for_sheet_role(teaching_name, sheet_role)[:32]
+                        await member.edit(nick=new_nick, reason="syncallstaff")
+                        line_parts.append("✅ Discord")
+                        success_disc += 1
+                    except discord.Forbidden:
+                        line_parts.append("⚠️ Discord (no permission)")
+                        failed_disc += 1
+                    except Exception as e:
+                        line_parts.append(f"⚠️ Discord ({e})")
+                        failed_disc += 1
+                else:
+                    expected_nick = get_nickname_for_sheet_role(teaching_name, sheet_role)[:32]
+                    current_nick  = member.nick or member.name
+                    nick_change   = f"`{current_nick}` → `{expected_nick}`" if current_nick != expected_nick else "nick unchanged"
+                    line_parts.append(f"🔍 Discord ({nick_change})")
+                    success_disc += 1
+            else:
+                line_parts.append("⚠️ Discord (not in server)")
+                failed_disc += 1
+        else:
+            line_parts.append("➖ Discord (no ID)")
+            skipped += 1
+
+        # --- Roblox ---
+        if roblox_username and roblox_username != "N/A":
+            if sheet_role in ROLE_NAME_MAP:
+                if not dry_run:
+                    success, result = await roblox_set_rank_by_sheet_role(roblox_username, sheet_role)
+                    if success:
+                        line_parts.append(f"✅ Roblox → {result}")
+                        success_rbx += 1
+                    else:
+                        line_parts.append(f"⚠️ Roblox ({result})")
+                        failed_rbx += 1
+                else:
+                    expected_rank = ROLE_NAME_MAP.get(sheet_role, "unknown")
+                    line_parts.append(f"🔍 Roblox → {expected_rank}")
+                    success_rbx += 1
+            else:
+                line_parts.append("➖ Roblox (role not in map)")
+        else:
+            line_parts.append("➖ Roblox (no username)")
+
+        details.append(" | ".join(line_parts))
+
+        # Small delay to avoid hitting rate limits
+        await asyncio.sleep(0.5)
+
+    # --- Build summary embed ---
+    mode_label = "DRY RUN PREVIEW" if dry_run else "Sync Complete"
+    embed = discord.Embed(
+        title=f"{'🔍 ' if dry_run else '✅ '}Staff Sync — {mode_label}",
+        color=discord.Color.blue() if dry_run else discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="Total Staff",      value=total,        inline=True)
+    embed.add_field(name="Discord ✅",        value=success_disc, inline=True)
+    embed.add_field(name="Discord ⚠️",        value=failed_disc,  inline=True)
+    embed.add_field(name="Roblox ✅",         value=success_rbx,  inline=True)
+    embed.add_field(name="Roblox ⚠️",         value=failed_rbx,   inline=True)
+    embed.add_field(name="Skipped",          value=skipped,      inline=True)
+
+    if dry_run:
+        embed.set_footer(text="Dry run — no changes were made. Run /syncallstaff dry_run:False to apply.")
+    else:
+        embed.set_footer(text=f"Triggered by {interaction.user.display_name}")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # --- Send per-person detail in chunks (ephemeral followups) ---
+    chunk = ""
+    for line in details:
+        if len(chunk) + len(line) + 1 > 1900:
+            await interaction.followup.send(f"```\n{chunk.strip()}\n```", ephemeral=True)
+            chunk = ""
+        chunk += line + "\n"
+    if chunk.strip():
+        await interaction.followup.send(f"```\n{chunk.strip()}\n```", ephemeral=True)
+
 
 # -------------------------------------------------
 #  /diagnoseroblox
