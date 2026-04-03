@@ -69,6 +69,8 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "diagnoseroblox":       30,
     "openroles":            10,
     "viewstaff":            10,
+    "requestname":          30,
+    "requestdisplayname":   100,
 }
 
 def cooldown(command_name: str | None = None):
