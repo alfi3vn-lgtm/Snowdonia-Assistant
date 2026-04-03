@@ -262,9 +262,20 @@ EDIT_STAFF_SHEET    = "Edit Staff"
 ALL_STAFF_DATA_START = 5
 ALL_STAFF_NAME_COL   = 3
 
+# Current Staff sheet (columns are 0-indexed, data starts row 5):
+# Index 0 = A (unused/row ref)
+# Index 1 = B  Position
+# Index 2 = C  Staff Username (Roblox)
+# Index 3 = D  Teaching Name
+# Index 4 = E  Area
+# Index 5 = F  TL (Training Level)
+# Index 6 = G  LOA
+# Index 7 = H  Discord ID
+# Index 8 = I  Strikes
+# Index 9 = J  Attendance This Week
 CURRENT_STAFF_DATA_START     = 5
-CURRENT_STAFF_NAME_COL       = 3
-CURRENT_STAFF_ATTENDANCE_COL = 9
+CURRENT_STAFF_NAME_COL       = 3   # D — Teaching Name
+CURRENT_STAFF_ATTENDANCE_COL = 9   # J — Attendance This Week
 
 ATTEND_DATA_START  = 5
 ATTEND_NAME_COL    = 1
@@ -299,9 +310,7 @@ class RobloxAPI:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
 
-    # ------------------------------------------------------------------
     def get_user_id_by_username(self, username: str) -> int | None:
-        """Resolve a Roblox username → user ID."""
         try:
             resp = self.session.post(
                 "https://users.roblox.com/v1/usernames/users",
@@ -315,9 +324,7 @@ class RobloxAPI:
             print(f"[Roblox] Username → ID error: {e}")
             return None
 
-    # ------------------------------------------------------------------
     def get_group_roles(self) -> list[dict]:
-        """Return all roles in the group."""
         try:
             resp = self.session.get(
                 f"https://groups.roblox.com/v1/groups/{self.group_id}/roles",
@@ -329,36 +336,22 @@ class RobloxAPI:
             print(f"[Roblox] Get group roles error: {e}")
             return []
 
-    # ------------------------------------------------------------------
     def find_role_id_by_name(self, roblox_rank_name: str) -> int | None:
-        """Find a role ID in the group by its display name (case-insensitive)."""
         for role in self.get_group_roles():
             if role["name"].lower() == roblox_rank_name.lower():
                 return role["id"]
         return None
 
-    # ------------------------------------------------------------------
     def find_rank_1_role_id(self) -> int | None:
-        """Find the role ID for rank 1 (lowest rank) in the group."""
         roles = self.get_group_roles()
         if not roles:
             return None
         rank_1 = next((r for r in roles if r["rank"] == 1), None)
         if rank_1:
             return rank_1["id"]
-        # Fallback: lowest rank available
         return sorted(roles, key=lambda r: r["rank"])[0]["id"]
 
-    # ------------------------------------------------------------------
     def change_user_rank(self, user_id: int, role_id: int) -> tuple[bool, str]:
-        """
-        PATCH the user's rank in the group.
-
-        Pattern from the working script:
-          1. First PATCH with cookie only (no CSRF).
-          2. If 403 and X-CSRF-TOKEN header present, grab token and retry.
-          3. Return (True, "") on 200, (False, reason) otherwise.
-        """
         url     = f"https://groups.roblox.com/v1/groups/{self.group_id}/users/{user_id}"
         headers = {
             "Cookie":       f".ROBLOSECURITY={self.security_cookie}",
@@ -368,15 +361,12 @@ class RobloxAPI:
         payload = {"roleId": role_id}
 
         try:
-            # Attempt 1 — triggers CSRF challenge
             resp = self.session.patch(url, headers=headers, json=payload, timeout=10)
 
-            # Grab CSRF token from the 403 response and retry
             if resp.status_code == 403 and "X-CSRF-TOKEN" in resp.headers:
                 headers["X-CSRF-TOKEN"] = resp.headers["X-CSRF-TOKEN"]
                 resp = self.session.patch(url, headers=headers, json=payload, timeout=10)
 
-            # Evaluate final response
             if resp.status_code == 200:
                 return True, ""
             if resp.status_code == 401:
@@ -396,7 +386,7 @@ class RobloxAPI:
 
 
 # -------------------------------------------------
-#  Instantiate Roblox API (lazily — cookie may not be set at import)
+#  Instantiate Roblox API
 # -------------------------------------------------
 def get_roblox_api() -> RobloxAPI | None:
     if not ROBLOX_COOKIE:
@@ -405,7 +395,7 @@ def get_roblox_api() -> RobloxAPI | None:
 
 
 # -------------------------------------------------
-#  Async wrappers (run sync RobloxAPI in executor)
+#  Async wrappers
 # -------------------------------------------------
 async def roblox_get_user_id(username: str) -> int | None:
     api = get_roblox_api()
@@ -419,11 +409,6 @@ async def roblox_set_rank_by_sheet_role(
     roblox_username: str,
     sheet_role_name: str,
 ) -> tuple[bool, str]:
-    """
-    Full pipeline:
-      sheet role name → ROLE_NAME_MAP → Roblox rank name → role ID → PATCH
-    Returns (success, message).
-    """
     api = get_roblox_api()
     if not api:
         return False, "ROBLOX_AUTH_TOKEN environment variable is not set."
@@ -444,12 +429,11 @@ async def roblox_set_rank_by_sheet_role(
 
     success, err = await loop.run_in_executor(None, api.change_user_rank, user_id, role_id)
     if success:
-        return True, roblox_rank_name   # return rank name so embed can show it
+        return True, roblox_rank_name
     return False, err
 
 
 async def roblox_demote_to_rank_1(roblox_username: str) -> tuple[bool, str]:
-    """Demote a user to rank 1 (used when removing staff)."""
     api = get_roblox_api()
     if not api:
         return False, "ROBLOX_AUTH_TOKEN environment variable is not set."
@@ -557,26 +541,28 @@ def get_available_periods(timetable_data, year):
 
 
 async def get_staff_teaching_name(discord_id: str):
+    """Look up a staff member's Teaching Name (col D, index 3) by Discord ID (col H, index 7)."""
     try:
         all_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
         )
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
-            if len(row) > 7 and row[7].strip() == discord_id:
-                return row[CURRENT_STAFF_NAME_COL].strip()
+            if len(row) > 7 and row[7].strip() == discord_id:   # col H = index 7
+                return row[CURRENT_STAFF_NAME_COL].strip()       # col D = index 3
     except Exception as e:
         print(f"Error getting teaching name: {e}")
     return None
 
 
 async def get_roblox_username_for_staff(teaching_name: str) -> str | None:
+    """Look up a staff member's Roblox username (col C, index 2) by Teaching Name (col D, index 3)."""
     try:
         all_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
         )
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
-                username = safe_get(row, 2)
+                username = safe_get(row, 2)   # col C = index 2 = Staff Username
                 return username if username != "N/A" else None
     except Exception as e:
         print(f"[Roblox] Sheet username lookup error: {e}")
@@ -653,7 +639,7 @@ async def timetable_post_task():
 @tasks.loop(minutes=1)
 async def timetable_reminder_task():
     now = datetime.now()
-    current_time  = now.strftime("%H:%M")
+    current_time   = now.strftime("%H:%M")
     reminder_times = ["21:15", "23:00", "07:30", "15:00", "16:30", "18:00", "19:00"]
 
     if current_time not in reminder_times:
@@ -786,13 +772,13 @@ def refresh_staff_names_cache():
     try:
         if not spreadsheet:
             return
-        worksheet = spreadsheet.worksheet(ALL_STAFF_SHEET)
+        worksheet = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
         all_data  = worksheet.get_all_values()
-        data_rows = all_data[ALL_STAFF_DATA_START - 1:]
+        data_rows = all_data[CURRENT_STAFF_DATA_START - 1:]
         staff_names_cache = [
-            row[ALL_STAFF_NAME_COL].strip()
+            row[CURRENT_STAFF_NAME_COL].strip()
             for row in data_rows
-            if len(row) > ALL_STAFF_NAME_COL and row[ALL_STAFF_NAME_COL].strip()
+            if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip()
         ]
         staff_names_cache_time = datetime.now()
         print(f"Staff names cache refreshed: {len(staff_names_cache)} names loaded")
@@ -1210,7 +1196,7 @@ async def open_roles(interaction: discord.Interaction):
         role_counts: dict[str, int] = {}
         for row in current_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) > 1:
-                role = row[1].strip()
+                role = row[1].strip()   # col B = index 1 = Position
                 if role:
                     role_counts[role] = role_counts.get(role, 0) + 1
 
@@ -1348,7 +1334,6 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
             embed.add_field(name="New Value",     value=value,                            inline=True)
             embed.set_footer(text="Staff record has been updated")
 
-            # If role changed, update Roblox rank too
             if field == "role":
                 roblox_username = await get_roblox_username_for_staff(staff_name)
                 if roblox_username:
@@ -1537,13 +1522,13 @@ async def log_training(interaction: discord.Interaction, staff_name: str, traini
 
     try:
         all_data = await safe_sheets_call(
-            lambda: spreadsheet.worksheet(ALL_STAFF_SHEET).get_all_values()
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
         )
 
         current_level = None
-        for row in all_data[ALL_STAFF_DATA_START - 1:]:
-            if len(row) > ALL_STAFF_NAME_COL and row[ALL_STAFF_NAME_COL].strip().lower() == staff_name.lower():
-                current_level = safe_get(row, 5, "").strip()
+        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+            if len(row) > CURRENT_STAFF_NAME_COL and row[CURRENT_STAFF_NAME_COL].strip().lower() == staff_name.lower():
+                current_level = safe_get(row, 5, "").strip()   # col F = index 5 = TL
                 break
 
         if current_level is None:
@@ -1573,7 +1558,7 @@ async def log_training(interaction: discord.Interaction, staff_name: str, traini
             await interaction.followup.send(f"Apps Script error (HTTP {status}):\n```{response_text[:500]}```")
 
     except gspread.WorksheetNotFound:
-        await interaction.followup.send(f"❌ Sheet '{ALL_STAFF_SHEET}' not found!")
+        await interaction.followup.send(f"❌ Sheet '{CURRENT_STAFF_SHEET}' not found!")
     except aiohttp.ClientError as e:
         await interaction.followup.send(f"❌ Could not reach Apps Script: {e}")
     except Exception as e:
@@ -1634,12 +1619,14 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
             embed.add_field(name="Role",            value=role,                    inline=True)
             embed.set_footer(text="Staff record has been created")
 
-            # Rank on Roblox using the working pipeline
             success, result = await roblox_set_rank_by_sheet_role(roblox_username, role)
             if success:
                 embed.add_field(name="Roblox Group", value=f"✅ Ranked to **{result}**", inline=False)
             else:
                 embed.add_field(name="Roblox Group", value=f"⚠️ {result}", inline=False)
+
+            # Refresh the staff names cache so the new hire appears in autocomplete
+            refresh_staff_names_cache()
 
             await interaction.followup.send(embed=embed)
         else:
@@ -1661,6 +1648,9 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
     await interaction.response.defer()
     current_date = datetime.now().strftime("%Y-%m-%d")
 
+    # Look up Roblox username from Current Staff BEFORE removing
+    roblox_username = await get_roblox_username_for_staff(staff_name)
+
     params = {
         "action":          "removestaff",
         "staffName":       staff_name,
@@ -1679,7 +1669,6 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             embed.set_footer(text="Staff record has been updated")
 
             # Demote to rank 1 on Roblox
-            roblox_username = await get_roblox_username_for_staff(staff_name)
             if roblox_username:
                 success, err = await roblox_demote_to_rank_1(roblox_username)
                 if success:
@@ -1688,6 +1677,9 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
                     embed.add_field(name="Roblox Group", value=f"⚠️ {err}", inline=False)
             else:
                 embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
+
+            # Refresh cache so removed staff no longer appears in autocomplete
+            refresh_staff_names_cache()
 
             await interaction.followup.send(embed=embed)
         else:
@@ -1715,7 +1707,7 @@ async def profile(interaction: discord.Interaction):
         staff_row_idx  = None
         staff_row_data = None
         for i, row in enumerate(all_data[CURRENT_STAFF_DATA_START - 1:], start=CURRENT_STAFF_DATA_START):
-            if len(row) > 7 and row[7].strip() == user_discord_id:
+            if len(row) > 7 and row[7].strip() == user_discord_id:   # col H = index 7 = Discord ID
                 staff_row_idx  = i
                 staff_row_data = row
                 break
@@ -1727,46 +1719,44 @@ async def profile(interaction: discord.Interaction):
             )
             return
 
-        teaching_name = safe_get(staff_row_data, CURRENT_STAFF_NAME_COL)
-        strikes_value = safe_get(staff_row_data, 8, "0")
+        teaching_name = safe_get(staff_row_data, 3)        # col D = Teaching Name
+        loa_value     = safe_get(staff_row_data, 6)        # col G = LOA
+        strikes_value = safe_get(staff_row_data, 8, "0")   # col I = Strikes
 
         embed = discord.Embed(title="Your Staff Profile", description=f"**{teaching_name}**", color=discord.Color.blue())
-        embed.add_field(name="Role",            value=safe_get(staff_row_data, 1),      inline=True)
-        embed.add_field(name="Roblox Username", value=safe_get(staff_row_data, 2),      inline=True)
-        embed.add_field(name="Area",            value=safe_get(staff_row_data, 4),      inline=True)
-        embed.add_field(name="Training Level",  value=safe_get(staff_row_data, 5, "0"), inline=True)
-        loa_value = safe_get(staff_row_data, 6)
+        embed.add_field(name="Role",            value=safe_get(staff_row_data, 1),      inline=True)   # col B
+        embed.add_field(name="Roblox Username", value=safe_get(staff_row_data, 2),      inline=True)   # col C
+        embed.add_field(name="Area",            value=safe_get(staff_row_data, 4),      inline=True)   # col E
+        embed.add_field(name="Training Level",  value=safe_get(staff_row_data, 5, "0"), inline=True)   # col F
         embed.add_field(name="LOA",             value=loa_value,                        inline=True)
         embed.add_field(name="Strikes",         value=strikes_value,                    inline=True)
 
+        # Fetch cell notes directly from Current Staff using the already-found row index
         try:
-            all_staff_data = await safe_sheets_call(
-                lambda: spreadsheet.worksheet(ALL_STAFF_SHEET).get_all_values()
-            )
-            ws = spreadsheet.worksheet(ALL_STAFF_SHEET)
-            for i, row in enumerate(all_staff_data[ALL_STAFF_DATA_START - 1:], start=ALL_STAFF_DATA_START):
-                if len(row) > ALL_STAFF_NAME_COL and row[ALL_STAFF_NAME_COL].strip().lower() == teaching_name.lower():
-                    strike_cell = await safe_sheets_call(lambda: ws.cell(i, 9))
-                    if strike_cell.note:
-                        lines = [l.strip() for l in strike_cell.note.strip().split('\n') if l.strip()]
-                        formatted = []
-                        for line in lines:
-                            if line.startswith("Strike "):
-                                parts = line.split(" - ", 1)
-                                formatted.append(f"{parts[0].replace('Strike ', '')} - {parts[1]}" if len(parts) == 2 else line)
-                            else:
-                                formatted.append(line)
-                        if formatted:
-                            embed.add_field(name="Strike Reasons", value="\n".join(formatted), inline=False)
-                    if loa_value != "N/A":
-                        loa_cell = await safe_sheets_call(lambda: ws.cell(i, 7))
-                        if loa_cell.note:
-                            embed.add_field(name="LOA Reason", value=loa_cell.note, inline=False)
-                    break
-        except Exception as e:
-            print(f"Error fetching reasons: {e}")
+            if staff_row_idx:
+                ws = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
 
-        embed.add_field(name="Attendance", value=f"{safe_get(staff_row_data, CURRENT_STAFF_ATTENDANCE_COL, '0')} sessions", inline=False)
+                strike_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 9))   # col I = Strikes
+                if strike_cell.note:
+                    lines = [l.strip() for l in strike_cell.note.strip().split('\n') if l.strip()]
+                    formatted = []
+                    for line in lines:
+                        if line.startswith("Strike "):
+                            parts = line.split(" - ", 1)
+                            formatted.append(f"{parts[0].replace('Strike ', '')} - {parts[1]}" if len(parts) == 2 else line)
+                        else:
+                            formatted.append(line)
+                    if formatted:
+                        embed.add_field(name="Strike Reasons", value="\n".join(formatted), inline=False)
+
+                if loa_value != "N/A":
+                    loa_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 7))   # col G = LOA
+                    if loa_cell.note:
+                        embed.add_field(name="LOA Reason", value=loa_cell.note, inline=False)
+        except Exception as e:
+            print(f"Error fetching cell notes: {e}")
+
+        embed.add_field(name="Attendance", value=f"{safe_get(staff_row_data, 9, '0')} sessions", inline=False)   # col J
         embed.set_footer(text=f"Discord ID: {user_discord_id}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -1832,50 +1822,44 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
             await interaction.followup.send(f"Staff member **{staff_name}** not found.")
             return
 
-        strikes_value = safe_get(staff_row_data, 8, "0")
-        loa_value     = safe_get(staff_row_data, 6)
-        discord_id    = safe_get(staff_row_data, 7)
+        strikes_value = safe_get(staff_row_data, 8, "0")   # col I = Strikes
+        loa_value     = safe_get(staff_row_data, 6)        # col G = LOA
+        discord_id    = safe_get(staff_row_data, 7)        # col H = Discord ID
 
         embed = discord.Embed(title=f"Staff Information: {staff_name}", color=discord.Color.blue())
-        embed.add_field(name="Role",                value=safe_get(staff_row_data, 1),      inline=True)
-        embed.add_field(name="Roblox Username",     value=safe_get(staff_row_data, 2),      inline=True)
-        embed.add_field(name="Area",                value=safe_get(staff_row_data, 4),      inline=True)
-        embed.add_field(name="TL (Training Level)", value=safe_get(staff_row_data, 5, "0"), inline=True)
+        embed.add_field(name="Role",                value=safe_get(staff_row_data, 1),      inline=True)   # col B
+        embed.add_field(name="Roblox Username",     value=safe_get(staff_row_data, 2),      inline=True)   # col C
+        embed.add_field(name="Area",                value=safe_get(staff_row_data, 4),      inline=True)   # col E
+        embed.add_field(name="TL (Training Level)", value=safe_get(staff_row_data, 5, "0"), inline=True)   # col F
         embed.add_field(name="LOA",                 value=loa_value,                        inline=True)
         embed.add_field(name="Discord",             value=f"<@{discord_id}>" if discord_id != "N/A" else "Not set", inline=True)
         embed.add_field(name="Strikes",             value=strikes_value,                    inline=True)
-        embed.add_field(name="Attendance",          value=f"{safe_get(staff_row_data, CURRENT_STAFF_ATTENDANCE_COL, '0')} sessions", inline=True)
+        embed.add_field(name="Attendance",          value=f"{safe_get(staff_row_data, 9, '0')} sessions", inline=True)   # col J
 
+        # Fetch cell notes directly from Current Staff using the already-found row index
         try:
-            all_staff_data = await safe_sheets_call(
-                lambda: spreadsheet.worksheet(ALL_STAFF_SHEET).get_all_values()
-            )
-            ws = spreadsheet.worksheet(ALL_STAFF_SHEET)
-            for i, row in enumerate(all_staff_data[ALL_STAFF_DATA_START - 1:], start=ALL_STAFF_DATA_START):
-                if len(row) > ALL_STAFF_NAME_COL and row[ALL_STAFF_NAME_COL].strip().lower() == staff_name.lower():
-                    strike_cell = await safe_sheets_call(lambda: ws.cell(i, 9))
-                    if strike_cell.note:
-                        lines = [l.strip() for l in strike_cell.note.strip().split('\n') if l.strip()]
-                        formatted = []
-                        for line in lines:
-                            if line.startswith("Strike "):
-                                parts = line.split(" - ", 1)
-                                formatted.append(f"{parts[0].replace('Strike ', '')} - {parts[1]}" if len(parts) == 2 else line)
-                            else:
-                                formatted.append(line)
-                        if formatted:
-                            embed.add_field(name="Strike Reasons", value="\n".join(formatted), inline=False)
-                    if loa_value != "N/A":
-                        loa_cell = await safe_sheets_call(lambda: ws.cell(i, 7))
-                        if loa_cell.note:
-                            embed.add_field(name="LOA Reason", value=loa_cell.note, inline=False)
-                    break
-        except Exception as e:
-            print(f"Error fetching reasons: {e}")
+            if staff_row_idx:
+                ws = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
 
-        if loa_value != "N/A":
-            embed.add_field(name="Leave Date",          value=safe_get(staff_row_data, 10), inline=True)
-            embed.add_field(name="Reason of Departure", value=safe_get(staff_row_data, 11), inline=True)
+                strike_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 9))   # col I = Strikes
+                if strike_cell.note:
+                    lines = [l.strip() for l in strike_cell.note.strip().split('\n') if l.strip()]
+                    formatted = []
+                    for line in lines:
+                        if line.startswith("Strike "):
+                            parts = line.split(" - ", 1)
+                            formatted.append(f"{parts[0].replace('Strike ', '')} - {parts[1]}" if len(parts) == 2 else line)
+                        else:
+                            formatted.append(line)
+                    if formatted:
+                        embed.add_field(name="Strike Reasons", value="\n".join(formatted), inline=False)
+
+                if loa_value != "N/A":
+                    loa_cell = await safe_sheets_call(lambda: ws.cell(staff_row_idx, 7))   # col G = LOA
+                    if loa_cell.note:
+                        embed.add_field(name="LOA Reason", value=loa_cell.note, inline=False)
+        except Exception as e:
+            print(f"Error fetching cell notes: {e}")
 
         embed.set_footer(text=f"Row {staff_row_idx} | {CURRENT_STAFF_SHEET}")
         await interaction.followup.send(embed=embed)
@@ -1904,8 +1888,8 @@ async def check_attendance(interaction: discord.Interaction):
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
             if len(row) <= 9:
                 continue
-            name           = row[3].strip()
-            attendance_raw = row[9].strip()
+            name           = row[3].strip()    # col D = Teaching Name
+            attendance_raw = row[9].strip()    # col J = Attendance This Week
             if not name or not attendance_raw:
                 continue
             try:
@@ -1934,6 +1918,7 @@ async def check_attendance(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
 
+
 # -------------------------------------------------
 #  /viewstaff
 # -------------------------------------------------
@@ -1951,7 +1936,6 @@ async def view_staff(interaction: discord.Interaction):
             lambda: spreadsheet.worksheet(ROLES_LIST_SHEET).get_all_values()
         )
 
-        # Build ordered roles list from the sheet, flattened
         roles_order = []
         for row in roles_data:
             for cell in row:
@@ -1959,19 +1943,17 @@ async def view_staff(interaction: discord.Interaction):
                 if cell and cell not in roles_order:
                     roles_order.append(cell)
 
-        # Reverse so highest rank is first, then move School Staff to the end
         roles_order.reverse()
         if "School Staff" in roles_order:
             roles_order.remove("School Staff")
             roles_order.append("School Staff")
 
-        # Read staff
         staff_by_role: dict[str, list[str]] = {role: [] for role in roles_order}
         unmatched: list[tuple[str, str]] = []
 
         for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
-            name = safe_get(row, CURRENT_STAFF_NAME_COL, "").strip()
-            role = safe_get(row, 1, "").strip()
+            name = safe_get(row, CURRENT_STAFF_NAME_COL, "").strip()   # col D
+            role = safe_get(row, 1, "").strip()                         # col B
             if not name or name == "N/A":
                 continue
             if role in staff_by_role:
@@ -1979,7 +1961,6 @@ async def view_staff(interaction: discord.Interaction):
             else:
                 unmatched.append((name, role))
 
-        # Build one big text block, role by role
         lines = []
         total = 0
         for role in roles_order:
@@ -1990,7 +1971,7 @@ async def view_staff(interaction: discord.Interaction):
             lines.append(f"__**{role}**__")
             for name in members:
                 lines.append(f"• {name}")
-            lines.append("")  # blank line between roles
+            lines.append("")
 
         if unmatched:
             lines.append("__**❓ Unknown Role**__")
@@ -2000,7 +1981,6 @@ async def view_staff(interaction: discord.Interaction):
 
         full_text = "\n".join(lines).strip()
 
-        # Split into chunks of 4000 chars and send as separate embeds
         chunks = []
         current_chunk = ""
         for line in full_text.split("\n"):
@@ -2015,7 +1995,6 @@ async def view_staff(interaction: discord.Interaction):
             await interaction.followup.send("❌ No current staff members found.")
             return
 
-        # First embed has the title
         first_embed = discord.Embed(
             title="👥 Current Staff",
             description=chunks[0],
@@ -2025,7 +2004,6 @@ async def view_staff(interaction: discord.Interaction):
         first_embed.set_footer(text=f"{total} staff member(s) total")
         await interaction.followup.send(embed=first_embed)
 
-        # Any overflow goes in continuation embeds
         for i, chunk in enumerate(chunks[1:], start=2):
             cont_embed = discord.Embed(
                 description=chunk,
@@ -2043,16 +2021,17 @@ async def view_staff(interaction: discord.Interaction):
 # -------------------------------------------------
 #  /resetattendance
 # -------------------------------------------------
-@bot.tree.command(name="resetattendance", description="Reset all attendance records to 0 on All Staff sheet")
+@bot.tree.command(name="resetattendance", description="Reset all attendance records to 0 on Current Staff sheet")
 @cooldown()
 async def reset_attendance(interaction: discord.Interaction):
     await interaction.response.defer()
 
     try:
         def _reset():
-            worksheet  = spreadsheet.worksheet(ALL_STAFF_SHEET)
+            worksheet  = spreadsheet.worksheet(CURRENT_STAFF_SHEET)
             last_row   = worksheet.row_count
-            cell_range = worksheet.range(f"J5:J{last_row}")
+            # col J = column 10 (1-indexed) = Attendance This Week
+            cell_range = worksheet.range(f"J{CURRENT_STAFF_DATA_START}:J{last_row}")
             for cell in cell_range:
                 cell.value = 0
             worksheet.update_cells(cell_range)
@@ -2061,14 +2040,14 @@ async def reset_attendance(interaction: discord.Interaction):
         rows_reset = await safe_sheets_call(_reset)
 
         embed = discord.Embed(title="Attendance Reset Complete!", color=discord.Color.green())
-        embed.add_field(name="Sheet",      value=ALL_STAFF_SHEET,               inline=True)
-        embed.add_field(name="Column",     value="J (Attendance)",              inline=True)
+        embed.add_field(name="Sheet",      value=CURRENT_STAFF_SHEET,           inline=True)
+        embed.add_field(name="Column",     value="J (Attendance This Week)",     inline=True)
         embed.add_field(name="Rows Reset", value=f"{rows_reset} rows set to 0", inline=True)
-        embed.set_footer(text=f"All attendance in {ALL_STAFF_SHEET} has been reset to 0")
+        embed.set_footer(text=f"All attendance in {CURRENT_STAFF_SHEET} has been reset to 0")
         await interaction.followup.send(embed=embed)
 
     except gspread.WorksheetNotFound:
-        await interaction.followup.send(f"Sheet '{ALL_STAFF_SHEET}' not found!")
+        await interaction.followup.send(f"Sheet '{CURRENT_STAFF_SHEET}' not found!")
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
 
