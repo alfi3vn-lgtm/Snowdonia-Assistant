@@ -2950,88 +2950,82 @@ STUDENT_NAME_LOG_ID = 1489698033573826601
 
 class StudentNameRequestView(discord.ui.View):
     def __init__(self, requester_id: int, requested_name: str):
-        super().__init__(timeout=None) # Keeps buttons working after bot restart
+        super().__init__(timeout=None)
         self.requester_id = requester_id
         self.requested_name = requested_name
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="stud_name_approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-
+        
         guild = interaction.guild
-        member = guild.get_member(self.requester_id)
+        member = None
+        error_log = ""
 
-        # 1. Update Nickname
-        nickname_success = False
+        # FORCE FETCH: This solves 90% of "nothing happening" issues
+        try:
+            member = await guild.fetch_member(self.requester_id)
+        except Exception as e:
+            error_log = f"Could not find member: {e}"
+
         if member:
+            # 1. TRY NICKNAME CHANGE
             try:
-                await member.edit(nick=self.requested_name, reason=f"Student name request approved by {interaction.user.display_name}")
-                nickname_success = True
+                await member.edit(nick=self.requested_name)
             except discord.Forbidden:
-                await interaction.followup.send("⚠️ I don't have permission to change that user's nickname.", ephemeral=True)
+                error_log += " | Bot lacks 'Manage Nicknames' or Hierarchy is too low."
             except Exception as e:
-                await interaction.followup.send(f"⚠️ Error updating nickname: {e}", ephemeral=True)
+                error_log += f" | Nick Error: {e}"
 
-        # 2. Send the Specific Approval DM
-        if member:
+            # 2. TRY DM
             try:
                 dm_embed = discord.Embed(
                     title="Name Request Approved",
-                    description=(
-                        f"Your request to change your display name to **{self.requested_name}** has been approved.\n\n"
-                        f"Your Discord nickname has been updated accordingly. If you notice any discrepancies, "
-                        f"please contact a member of the Senior Leadership Team."
-                    ),
+                    description=f"Your request to change your display name to **{self.requested_name}** has been approved.\n\nYour Discord nickname has been updated accordingly. If you notice any discrepancies, please contact a member of the Senior Leadership Team.",
                     color=discord.Color.green()
                 )
                 await member.send(embed=dm_embed)
-            except discord.Forbidden:
-                pass # User has DMs off
+            except Exception as e:
+                error_log += f" | DM Error: {e} (User likely has DMs off)"
 
-        # 3. Update the original staff message
+        # Update the staff message
         for child in self.children:
             child.disabled = True
         
-        final_embed = interaction.message.embeds[0]
-        final_embed.title = "✅ Student Name Request Approved"
-        final_embed.color = discord.Color.green()
-        final_embed.set_footer(text=f"Approved by {interaction.user.display_name}")
+        new_embed = interaction.message.embeds[0]
+        new_embed.title = "✅ Approved & Processed"
+        if error_log:
+            new_embed.add_field(name="System Logs", value=f"```{error_log}```", inline=False)
         
-        await interaction.message.edit(embed=final_embed, view=self)
+        await interaction.message.edit(embed=new_embed, view=self)
 
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="stud_name_deny")
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-
+        
         guild = interaction.guild
-        member = guild.get_member(self.requester_id)
+        member = None
+        dm_status = "✅ Sent"
 
-        # 1. Send the Specific Denial DM
-        if member:
-            try:
-                dm_embed = discord.Embed(
-                    title="Name Request Unsuccessful",
-                    description=(
-                        f"Thank you for submitting your name change request to **{self.requested_name}**.\n\n"
-                        f"Unfortunately, your request has not been approved at this time. If you believe this is an error "
-                        f"or would like further clarification, please reach out to a member of the Senior Leadership Team."
-                    ),
-                    color=discord.Color.red()
-                )
-                await member.send(embed=dm_embed)
-            except discord.Forbidden:
-                pass
+        try:
+            member = await guild.fetch_member(self.requester_id)
+            dm_embed = discord.Embed(
+                title="Name Request Unsuccessful",
+                description=f"Thank you for submitting your name change request to **{self.requested_name}**.\n\nUnfortunately, your request has not been approved at this time. If you believe this is an error or would like further clarification, please reach out to a member of the Senior Leadership Team.",
+                color=discord.Color.red()
+            )
+            await member.send(embed=dm_embed)
+        except Exception as e:
+            dm_status = f"❌ Failed: {e}"
 
-        # 2. Update the original staff message
         for child in self.children:
             child.disabled = True
 
-        final_embed = interaction.message.embeds[0]
-        final_embed.title = "❌ Student Name Request Denied"
-        final_embed.color = discord.Color.red()
-        final_embed.set_footer(text=f"Denied by {interaction.user.display_name}")
-
-        await interaction.message.edit(embed=final_embed, view=self)
+        new_embed = interaction.message.embeds[0]
+        new_embed.title = "❌ Request Denied"
+        new_embed.add_field(name="DM Status", value=dm_status)
+        
+        await interaction.message.edit(embed=new_embed, view=self)
 
 @bot.tree.command(name="requestdisplayname", description="Request a change to your student display name")
 @app_commands.describe(new_name="The name you would like to be displayed as")
