@@ -281,6 +281,89 @@ FIELD_MAP = {
 
 
 # -------------------------------------------------
+#  NAME INITIALING LOGIC
+# -------------------------------------------------
+
+# Roblox rank names that get initialled display names on Discord
+INITIALLED_ROBLOX_RANKS = {
+    "Teaching Staff",
+    "Deputy Head of Year",
+    "Head of Year",
+    "Deputy Head of Level",
+    "Head of Level",
+}
+
+# Sheet role names that get initialled display names on Discord
+# (derived from ROLE_NAME_MAP, but listed explicitly for clarity)
+INITIALLED_SHEET_ROLES = {
+    sheet_role
+    for sheet_role, roblox_rank in ROLE_NAME_MAP.items()
+    if roblox_rank in INITIALLED_ROBLOX_RANKS
+}
+
+# Known honorific / title prefixes (case-insensitive match)
+KNOWN_TITLES = {
+    "mr", "mrs", "miss", "ms", "mx", "dr", "prof", "professor",
+    "sir", "rev", "reverend", "fr", "father", "lord", "lady",
+}
+
+
+def initial_middle_names(full_name: str) -> str:
+    """
+    Given a full teaching name such as "Miss Zoe Parker" or "Dr James Andrew Smith",
+    return the name with all parts EXCEPT the title and the last name initialled.
+
+    Examples
+    --------
+    "Miss Zoe Parker"          → "Miss Z Parker"
+    "Mr James Andrew Smith"    → "Mr J Smith"        (middle names dropped, first initialled)
+    "Dr Emily Clarke"          → "Dr E Clarke"
+    "Zoe Parker"               → "Z Parker"           (no title)
+    "Parker"                   → "Parker"              (single word — unchanged)
+    """
+    parts = full_name.strip().split()
+
+    if len(parts) <= 1:
+        # Nothing to initial
+        return full_name
+
+    # Detect whether the first word is an honorific
+    has_title = parts[0].lower().rstrip(".") in KNOWN_TITLES
+
+    if has_title:
+        if len(parts) == 2:
+            # "Miss Parker" — only title + surname, nothing to initial
+            return full_name
+        title   = parts[0]
+        surname = parts[-1]
+        # Initial the first name; drop any middle names
+        first_initial = parts[1][0].upper() + "."
+        return f"{title} {first_initial} {surname}"
+    else:
+        if len(parts) == 2:
+            # "Zoe Parker" — initial first name
+            first_initial = parts[0][0].upper() + "."
+            return f"{first_initial} {parts[1]}"
+        # "James Andrew Smith" — initial first name, drop middles
+        first_initial = parts[0][0].upper() + "."
+        surname = parts[-1]
+        return f"{first_initial} {surname}"
+
+
+def format_display_name(teaching_name: str, sheet_role: str) -> str:
+    """
+    Return the correctly formatted display name for a staff member.
+
+    Roles that map to Teaching Staff / Head of Year / Deputy Head of Year /
+    Head of Level / Deputy Head of Level  →  initialled first name.
+    All other roles (SLT, Site, etc.)     →  full teaching name as stored.
+    """
+    if sheet_role in INITIALLED_SHEET_ROLES:
+        return initial_middle_names(teaching_name)
+    return teaching_name
+
+
+# -------------------------------------------------
 #  DISCORD ROLE & NICKNAME CONFIG
 # -------------------------------------------------
 
@@ -376,7 +459,15 @@ def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
     """
     Return the correctly formatted Discord nickname for a staff member
     based on their sheet role and teaching name.
+
+    - Roles that map to Teaching Staff / Head of Year / Deputy Head of Year /
+      Head of Level / Deputy Head of Level  →  initialled first name + suffix
+    - SLT roles  →  full name + [SLT] tag
+    - All other roles  →  plain full name
     """
+    # Apply initialling where required
+    display_name = format_display_name(teaching_name, sheet_role)
+
     suffix_map: dict[str, str] = {
         # SLT — use [SLT] tag
         "Senior Deputy Headteacher": "[SLT]",
@@ -406,13 +497,10 @@ def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
 
     suffix = suffix_map.get(sheet_role)
     if suffix is None:
-        # School Staff, Site Staff, Site Manager, Teaching Staff, etc. — plain name
-        return teaching_name
+        # School Staff, Site Staff, Site Manager, etc. — plain display name
+        return display_name
 
-    # SLT bracket style vs pipe style
-    if suffix.startswith("["):
-        return f"{teaching_name} {suffix}"
-    return f"{teaching_name} {suffix}"
+    return f"{display_name} {suffix}"
 
 
 async def apply_discord_roles_and_nick(
@@ -1605,13 +1693,10 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                     embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
 
             # --- Discord role + nickname update ---
-            # We need to determine which fields changed to know what the
-            # current state of name + role is after the edit.
             guild = interaction.guild
             if guild:
                 # Resolve the staff member's Discord ID
                 if field == "discord_id":
-                    # The new discord ID is `value` itself
                     target_discord_id = value
                 else:
                     target_discord_id = await get_discord_id_for_staff(staff_name)
@@ -1621,7 +1706,7 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                     if member:
                         # Determine the effective role and teaching name after this edit
                         if field == "role":
-                            effective_role         = value
+                            effective_role          = value
                             effective_teaching_name = staff_name  # name hasn't changed
                         elif field == "teaching_name":
                             effective_teaching_name = value
@@ -1958,7 +2043,7 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
     current_date = datetime.now().strftime("%Y-%m-%d")
 
     # Look up Roblox username and Discord ID BEFORE removing from sheet
-    roblox_username  = await get_roblox_username_for_staff(staff_name)
+    roblox_username   = await get_roblox_username_for_staff(staff_name)
     target_discord_id = await get_discord_id_for_staff(staff_name)
 
     params = {
@@ -2481,6 +2566,19 @@ async def diagnose_roblox(interaction: discord.Interaction):
     output.append("  Extra roles:")
     for name, rid in DISCORD_EXTRA_ROLE_IDS.items():
         output.append(f"    {name}: {rid}")
+
+    output.append("\n[7] Name initialling test...")
+    test_cases = [
+        ("Miss Zoe Parker",       "Head of Year 7"),
+        ("Miss Zoe Parker",       "Assistant Headteacher"),
+        ("Dr James Andrew Smith", "School Staff"),
+        ("Mr John Williams",      "Deputy Head of Year 9"),
+        ("Mrs Sarah Thompson",    "Head of Lower Level"),
+        ("Prof Elizabeth Brown",  "Deputy Headteacher"),
+    ]
+    for name, role in test_cases:
+        result = get_nickname_for_sheet_role(name, role)
+        output.append(f"  {name!r} + {role!r} → {result!r}")
 
     output.append("\n" + "=" * 50)
     full_output = "\n".join(output)
