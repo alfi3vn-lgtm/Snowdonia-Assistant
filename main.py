@@ -17,6 +17,7 @@ from collections import defaultdict
 import time as time_module
 import functools
 import sys
+import re
 sys.stdout.reconfigure(line_buffering=True)
 
 # Simple web server to keep Render happy
@@ -3059,6 +3060,129 @@ async def request_display_name(interaction: discord.Interaction, new_name: str):
 
     await log_channel.send(embed=request_embed, view=view)
     await interaction.response.send_message("✅ Your request has been sent to the Senior Leadership Team.", ephemeral=True)
+
+# -------------------------------------------------
+#  /customrolerequest
+# -------------------------------------------------
+
+# --- CONFIGURATION ---
+ROLE_REQUEST_CHANNEL_ID = 1489704193467088997
+
+def is_valid_hex(hex_code: str):
+    """Checks if a string is a valid 6-digit hex code."""
+    if not hex_code:
+        return False
+    return bool(re.search(r'^#(?:[0-9a-fA-F]{3}){1,2}$|^[0-9a-fA-F]{6}$', hex_code))
+
+class CustomRoleView(discord.ui.View):
+    def __init__(self, requester_id: int, role_name: str, hex_color: str):
+        super().__init__(timeout=None)
+        self.requester_id = requester_id
+        self.role_name = role_name
+        self.hex_color = hex_color
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="role_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        guild = interaction.guild
+        member = await guild.fetch_member(self.requester_id)
+        
+        if not member:
+            return await interaction.followup.send("Member not found in server.", ephemeral=True)
+
+        # Handle Color
+        clean_hex = self.hex_color.replace("#", "") if self.hex_color else ""
+        if is_valid_hex(clean_hex):
+            color_value = discord.Color(int(clean_hex, 16))
+        else:
+            color_value = discord.Color.default()
+
+        try:
+            # 1. Create the Role
+            new_role = await guild.create_role(
+                name=self.role_name,
+                color=color_value,
+                reason=f"Custom role approved for {member.display_name} by {interaction.user.display_name}"
+            )
+
+            # 2. Give Role to Member
+            await member.add_roles(new_role)
+
+            # 3. Send Success DM
+            dm_embed = discord.Embed(
+                title="Custom Role Approved!",
+                description=(
+                    f"Your request for the custom role **{self.role_name}** has been approved.\n\n"
+                    f"The role has been created and added to your profile. Enjoy your new look!"
+                ),
+                color=color_value
+            )
+            await member.send(embed=dm_embed)
+
+            # Update Log
+            for child in self.children: child.disabled = True
+            log_embed = interaction.message.embeds[0]
+            log_embed.title = "✅ Role Request Approved & Created"
+            log_embed.color = discord.Color.green()
+            await interaction.message.edit(embed=log_embed, view=self)
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot lacks 'Manage Roles' permission.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="role_deny")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        guild = interaction.guild
+        member = await guild.fetch_member(self.requester_id)
+
+        if member:
+            try:
+                dm_embed = discord.Embed(
+                    title="Role Request Denied",
+                    description=(
+                        f"Unfortunately, your request for the custom role **{self.role_name}** was not approved at this time.\n\n"
+                        f"If you have questions regarding this decision, please contact the Senior Leadership Team."
+                    ),
+                    color=discord.Color.red()
+                )
+                await member.send(embed=dm_embed)
+            except: pass
+
+        for child in self.children: child.disabled = True
+        log_embed = interaction.message.embeds[0]
+        log_embed.title = "❌ Role Request Denied"
+        log_embed.color = discord.Color.red()
+        await interaction.message.edit(embed=log_embed, view=self)
+
+@bot.tree.command(name="customrolerequest", description="Request a custom role with a specific name and color")
+@app_commands.describe(name="The name of the role", color="The Hex color code (e.g. #ff0000 or ff0000)")
+async def customrolerequest(interaction: discord.Interaction, name: str, color: str = None):
+    log_channel = bot.get_channel(ROLE_REQUEST_CHANNEL_ID)
+    if not log_channel:
+        return await interaction.response.send_message("Log channel not found.", ephemeral=True)
+
+    # Preview color logic for the log embed
+    preview_color = discord.Color.blue()
+    clean_hex = color.replace("#", "") if color else ""
+    if is_valid_hex(clean_hex):
+        preview_color = discord.Color(int(clean_hex, 16))
+
+    request_embed = discord.Embed(
+        title="🎨 New Custom Role Request",
+        color=preview_color,
+        timestamp=interaction.created_at
+    )
+    request_embed.add_field(name="User", value=interaction.user.mention, inline=True)
+    request_embed.add_field(name="Requested Name", value=name, inline=True)
+    request_embed.add_field(name="Requested Color", value=f"`{color or 'Default'}`", inline=True)
+    request_embed.set_footer(text=f"User ID: {interaction.user.id}")
+
+    view = CustomRoleView(requester_id=interaction.user.id, role_name=name, hex_color=color)
+    
+    await log_channel.send(embed=request_embed, view=view)
+    await interaction.response.send_message("✅ Your role request has been submitted!", ephemeral=True)
 
 
 # -------------------------------------------------
