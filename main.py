@@ -2770,6 +2770,245 @@ async def diagnose_roblox(interaction: discord.Interaction):
     for chunk in chunks[1:]:
         await interaction.followup.send(f"```\n{chunk}\n```", ephemeral=True)
 
+# -------------------------------------------------
+#  STUDENT NAME REQUEST SYSTEM
+# -------------------------------------------------
+
+# The channel where Senior Leadership will see the buttons
+STUDENT_NAME_LOG_ID = 1489698033573826601
+
+class StudentNameRequestView(discord.ui.View):
+    def __init__(self, requester_id: int, requested_name: str):
+        super().__init__(timeout=None)
+        self.requester_id = requester_id
+        self.requested_name = requested_name
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="stud_name_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        
+        guild = interaction.guild
+        member = None
+        error_log = ""
+
+        # FORCE FETCH: This solves 90% of "nothing happening" issues
+        try:
+            member = await guild.fetch_member(self.requester_id)
+        except Exception as e:
+            error_log = f"Could not find member: {e}"
+
+        if member:
+            # 1. TRY NICKNAME CHANGE
+            try:
+                await member.edit(nick=self.requested_name)
+            except discord.Forbidden:
+                error_log += " | Bot lacks 'Manage Nicknames' or Hierarchy is too low."
+            except Exception as e:
+                error_log += f" | Nick Error: {e}"
+
+            # 2. TRY DM
+            try:
+                dm_embed = discord.Embed(
+                    title="Name Request Approved",
+                    description=f"Your request to change your display name to **{self.requested_name}** has been approved.\n\nYour Discord nickname has been updated accordingly. If you notice any discrepancies, please contact a member of the Senior Leadership Team.",
+                    color=discord.Color.green()
+                )
+                await member.send(embed=dm_embed)
+            except Exception as e:
+                error_log += f" | DM Error: {e} (User likely has DMs off)"
+
+        # Update the staff message
+        for child in self.children:
+            child.disabled = True
+        
+        new_embed = interaction.message.embeds[0]
+        new_embed.title = "✅ Approved & Processed"
+        if error_log:
+            new_embed.add_field(name="System Logs", value=f"```{error_log}```", inline=False)
+        
+        await interaction.message.edit(embed=new_embed, view=self)
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="stud_name_deny")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        
+        guild = interaction.guild
+        member = None
+        dm_status = "✅ Sent"
+
+        try:
+            member = await guild.fetch_member(self.requester_id)
+            dm_embed = discord.Embed(
+                title="Name Request Unsuccessful",
+                description=f"Thank you for submitting your name change request to **{self.requested_name}**.\n\nUnfortunately, your request has not been approved at this time. If you believe this is an error or would like further clarification, please reach out to a member of the Senior Leadership Team.",
+                color=discord.Color.red()
+            )
+            await member.send(embed=dm_embed)
+        except Exception as e:
+            dm_status = f"❌ Failed: {e}"
+
+        for child in self.children:
+            child.disabled = True
+
+        new_embed = interaction.message.embeds[0]
+        new_embed.title = "❌ Request Denied"
+        new_embed.add_field(name="DM Status", value=dm_status)
+        
+        await interaction.message.edit(embed=new_embed, view=self)
+
+@bot.tree.command(name="requestdisplayname", description="Request a change to your student display name")
+@app_commands.describe(new_name="The name you would like to be displayed as")
+async def request_display_name(interaction: discord.Interaction, new_name: str):
+    # Ensure name isn't too long for Discord
+    if len(new_name) > 32:
+        return await interaction.response.send_message("❌ Names must be under 32 characters.", ephemeral=True)
+
+    log_channel = bot.get_channel(STUDENT_NAME_LOG_ID)
+    if not log_channel:
+        return await interaction.response.send_message("❌ Log channel not found.", ephemeral=True)
+
+    # Embed for the Staff Channel
+    request_embed = discord.Embed(
+        title="🎓 Student Name Change Request",
+        description=f"A student has requested a name change.",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    request_embed.add_field(name="Student", value=interaction.user.mention, inline=True)
+    request_embed.add_field(name="Current Nickname", value=interaction.user.display_name, inline=True)
+    request_embed.add_field(name="Requested Name", value=f"`{new_name}`", inline=False)
+    request_embed.set_footer(text=f"User ID: {interaction.user.id}")
+
+    view = StudentNameRequestView(
+        requester_id=interaction.user.id,
+        requested_name=new_name
+    )
+
+    await log_channel.send(embed=request_embed, view=view)
+    await interaction.response.send_message("✅ Your request has been sent to the Senior Leadership Team.", ephemeral=True)
+
+# -------------------------------------------------
+#  /customrolerequest
+# -------------------------------------------------
+
+# --- CONFIGURATION ---
+ROLE_REQUEST_CHANNEL_ID = 1489704193467088997
+
+def is_valid_hex(hex_code: str):
+    """Checks if a string is a valid 6-digit hex code."""
+    if not hex_code:
+        return False
+    return bool(re.search(r'^#(?:[0-9a-fA-F]{3}){1,2}$|^[0-9a-fA-F]{6}$', hex_code))
+
+class CustomRoleView(discord.ui.View):
+    def __init__(self, requester_id: int, role_name: str, hex_color: str):
+        super().__init__(timeout=None)
+        self.requester_id = requester_id
+        self.role_name = role_name
+        self.hex_color = hex_color
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="role_approve")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        guild = interaction.guild
+        member = await guild.fetch_member(self.requester_id)
+        
+        if not member:
+            return await interaction.followup.send("Member not found in server.", ephemeral=True)
+
+        # Handle Color
+        clean_hex = self.hex_color.replace("#", "") if self.hex_color else ""
+        if is_valid_hex(clean_hex):
+            color_value = discord.Color(int(clean_hex, 16))
+        else:
+            color_value = discord.Color.default()
+
+        try:
+            # 1. Create the Role
+            new_role = await guild.create_role(
+                name=self.role_name,
+                color=color_value,
+                reason=f"Custom role approved for {member.display_name} by {interaction.user.display_name}"
+            )
+
+            # 2. Give Role to Member
+            await member.add_roles(new_role)
+
+            # 3. Send Success DM
+            dm_embed = discord.Embed(
+                title="Custom Role Approved!",
+                description=(
+                    f"Your request for the custom role **{self.role_name}** has been approved.\n\n"
+                    f"The role has been created and added to your profile. Enjoy your new look!"
+                ),
+                color=color_value
+            )
+            await member.send(embed=dm_embed)
+
+            # Update Log
+            for child in self.children: child.disabled = True
+            log_embed = interaction.message.embeds[0]
+            log_embed.title = "✅ Role Request Approved & Created"
+            log_embed.color = discord.Color.green()
+            await interaction.message.edit(embed=log_embed, view=self)
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot lacks 'Manage Roles' permission.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="role_deny")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        guild = interaction.guild
+        member = await guild.fetch_member(self.requester_id)
+
+        if member:
+            try:
+                dm_embed = discord.Embed(
+                    title="Role Request Denied",
+                    description=(
+                        f"Unfortunately, your request for the custom role **{self.role_name}** was not approved at this time.\n\n"
+                        f"If you have questions regarding this decision, please contact the Senior Leadership Team."
+                    ),
+                    color=discord.Color.red()
+                )
+                await member.send(embed=dm_embed)
+            except: pass
+
+        for child in self.children: child.disabled = True
+        log_embed = interaction.message.embeds[0]
+        log_embed.title = "❌ Role Request Denied"
+        log_embed.color = discord.Color.red()
+        await interaction.message.edit(embed=log_embed, view=self)
+
+@bot.tree.command(name="customrolerequest", description="Request a custom role with a specific name and color")
+@app_commands.describe(name="The name of the role", color="The Hex color code (e.g. #ff0000 or ff0000)")
+async def customrolerequest(interaction: discord.Interaction, name: str, color: str = None):
+    log_channel = bot.get_channel(ROLE_REQUEST_CHANNEL_ID)
+    if not log_channel:
+        return await interaction.response.send_message("Log channel not found.", ephemeral=True)
+
+    # Preview color logic for the log embed
+    preview_color = discord.Color.blue()
+    clean_hex = color.replace("#", "") if color else ""
+    if is_valid_hex(clean_hex):
+        preview_color = discord.Color(int(clean_hex, 16))
+
+    request_embed = discord.Embed(
+        title="🎨 New Custom Role Request",
+        color=preview_color,
+        timestamp=interaction.created_at
+    )
+    request_embed.add_field(name="User", value=interaction.user.mention, inline=True)
+    request_embed.add_field(name="Requested Name", value=name, inline=True)
+    request_embed.add_field(name="Requested Color", value=f"`{color or 'Default'}`", inline=True)
+    request_embed.set_footer(text=f"User ID: {interaction.user.id}")
+
+    view = CustomRoleView(requester_id=interaction.user.id, role_name=name, hex_color=color)
+    
+    await log_channel.send(embed=request_embed, view=view)
+    await interaction.response.send_message("✅ Your role request has been submitted!", ephemeral=True)
 
 # -------------------------------------------------
 #  /apply
@@ -3107,498 +3346,6 @@ async def apply(interaction: discord.Interaction):
         "## 📋 Winstree Academy — Staff Application\n"
         "Please select your age range below to begin your application.\n\n"
         "_ _",
-        view=AgeRangeView(),
-        ephemeral=True
-    )
-# -------------------------------------------------
-#  STUDENT NAME REQUEST SYSTEM
-# -------------------------------------------------
-
-# The channel where Senior Leadership will see the buttons
-STUDENT_NAME_LOG_ID = 1489698033573826601
-
-class StudentNameRequestView(discord.ui.View):
-    def __init__(self, requester_id: int, requested_name: str):
-        super().__init__(timeout=None)
-        self.requester_id = requester_id
-        self.requested_name = requested_name
-
-    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="stud_name_approve")
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        
-        guild = interaction.guild
-        member = None
-        error_log = ""
-
-        # FORCE FETCH: This solves 90% of "nothing happening" issues
-        try:
-            member = await guild.fetch_member(self.requester_id)
-        except Exception as e:
-            error_log = f"Could not find member: {e}"
-
-        if member:
-            # 1. TRY NICKNAME CHANGE
-            try:
-                await member.edit(nick=self.requested_name)
-            except discord.Forbidden:
-                error_log += " | Bot lacks 'Manage Nicknames' or Hierarchy is too low."
-            except Exception as e:
-                error_log += f" | Nick Error: {e}"
-
-            # 2. TRY DM
-            try:
-                dm_embed = discord.Embed(
-                    title="Name Request Approved",
-                    description=f"Your request to change your display name to **{self.requested_name}** has been approved.\n\nYour Discord nickname has been updated accordingly. If you notice any discrepancies, please contact a member of the Senior Leadership Team.",
-                    color=discord.Color.green()
-                )
-                await member.send(embed=dm_embed)
-            except Exception as e:
-                error_log += f" | DM Error: {e} (User likely has DMs off)"
-
-        # Update the staff message
-        for child in self.children:
-            child.disabled = True
-        
-        new_embed = interaction.message.embeds[0]
-        new_embed.title = "✅ Approved & Processed"
-        if error_log:
-            new_embed.add_field(name="System Logs", value=f"```{error_log}```", inline=False)
-        
-        await interaction.message.edit(embed=new_embed, view=self)
-
-    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="stud_name_deny")
-    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        
-        guild = interaction.guild
-        member = None
-        dm_status = "✅ Sent"
-
-        try:
-            member = await guild.fetch_member(self.requester_id)
-            dm_embed = discord.Embed(
-                title="Name Request Unsuccessful",
-                description=f"Thank you for submitting your name change request to **{self.requested_name}**.\n\nUnfortunately, your request has not been approved at this time. If you believe this is an error or would like further clarification, please reach out to a member of the Senior Leadership Team.",
-                color=discord.Color.red()
-            )
-            await member.send(embed=dm_embed)
-        except Exception as e:
-            dm_status = f"❌ Failed: {e}"
-
-        for child in self.children:
-            child.disabled = True
-
-        new_embed = interaction.message.embeds[0]
-        new_embed.title = "❌ Request Denied"
-        new_embed.add_field(name="DM Status", value=dm_status)
-        
-        await interaction.message.edit(embed=new_embed, view=self)
-
-@bot.tree.command(name="requestdisplayname", description="Request a change to your student display name")
-@app_commands.describe(new_name="The name you would like to be displayed as")
-async def request_display_name(interaction: discord.Interaction, new_name: str):
-    # Ensure name isn't too long for Discord
-    if len(new_name) > 32:
-        return await interaction.response.send_message("❌ Names must be under 32 characters.", ephemeral=True)
-
-    log_channel = bot.get_channel(STUDENT_NAME_LOG_ID)
-    if not log_channel:
-        return await interaction.response.send_message("❌ Log channel not found.", ephemeral=True)
-
-    # Embed for the Staff Channel
-    request_embed = discord.Embed(
-        title="🎓 Student Name Change Request",
-        description=f"A student has requested a name change.",
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
-    request_embed.add_field(name="Student", value=interaction.user.mention, inline=True)
-    request_embed.add_field(name="Current Nickname", value=interaction.user.display_name, inline=True)
-    request_embed.add_field(name="Requested Name", value=f"`{new_name}`", inline=False)
-    request_embed.set_footer(text=f"User ID: {interaction.user.id}")
-
-    view = StudentNameRequestView(
-        requester_id=interaction.user.id,
-        requested_name=new_name
-    )
-
-    await log_channel.send(embed=request_embed, view=view)
-    await interaction.response.send_message("✅ Your request has been sent to the Senior Leadership Team.", ephemeral=True)
-
-# -------------------------------------------------
-#  /customrolerequest
-# -------------------------------------------------
-
-# --- CONFIGURATION ---
-ROLE_REQUEST_CHANNEL_ID = 1489704193467088997
-
-def is_valid_hex(hex_code: str):
-    """Checks if a string is a valid 6-digit hex code."""
-    if not hex_code:
-        return False
-    return bool(re.search(r'^#(?:[0-9a-fA-F]{3}){1,2}$|^[0-9a-fA-F]{6}$', hex_code))
-
-class CustomRoleView(discord.ui.View):
-    def __init__(self, requester_id: int, role_name: str, hex_color: str):
-        super().__init__(timeout=None)
-        self.requester_id = requester_id
-        self.role_name = role_name
-        self.hex_color = hex_color
-
-    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="role_approve")
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        guild = interaction.guild
-        member = await guild.fetch_member(self.requester_id)
-        
-        if not member:
-            return await interaction.followup.send("Member not found in server.", ephemeral=True)
-
-        # Handle Color
-        clean_hex = self.hex_color.replace("#", "") if self.hex_color else ""
-        if is_valid_hex(clean_hex):
-            color_value = discord.Color(int(clean_hex, 16))
-        else:
-            color_value = discord.Color.default()
-
-        try:
-            # 1. Create the Role
-            new_role = await guild.create_role(
-                name=self.role_name,
-                color=color_value,
-                reason=f"Custom role approved for {member.display_name} by {interaction.user.display_name}"
-            )
-
-            # 2. Give Role to Member
-            await member.add_roles(new_role)
-
-            # 3. Send Success DM
-            dm_embed = discord.Embed(
-                title="Custom Role Approved!",
-                description=(
-                    f"Your request for the custom role **{self.role_name}** has been approved.\n\n"
-                    f"The role has been created and added to your profile. Enjoy your new look!"
-                ),
-                color=color_value
-            )
-            await member.send(embed=dm_embed)
-
-            # Update Log
-            for child in self.children: child.disabled = True
-            log_embed = interaction.message.embeds[0]
-            log_embed.title = "✅ Role Request Approved & Created"
-            log_embed.color = discord.Color.green()
-            await interaction.message.edit(embed=log_embed, view=self)
-
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Bot lacks 'Manage Roles' permission.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
-
-    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="role_deny")
-    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        guild = interaction.guild
-        member = await guild.fetch_member(self.requester_id)
-
-        if member:
-            try:
-                dm_embed = discord.Embed(
-                    title="Role Request Denied",
-                    description=(
-                        f"Unfortunately, your request for the custom role **{self.role_name}** was not approved at this time.\n\n"
-                        f"If you have questions regarding this decision, please contact the Senior Leadership Team."
-                    ),
-                    color=discord.Color.red()
-                )
-                await member.send(embed=dm_embed)
-            except: pass
-
-        for child in self.children: child.disabled = True
-        log_embed = interaction.message.embeds[0]
-        log_embed.title = "❌ Role Request Denied"
-        log_embed.color = discord.Color.red()
-        await interaction.message.edit(embed=log_embed, view=self)
-
-@bot.tree.command(name="customrolerequest", description="Request a custom role with a specific name and color")
-@app_commands.describe(name="The name of the role", color="The Hex color code (e.g. #ff0000 or ff0000)")
-async def customrolerequest(interaction: discord.Interaction, name: str, color: str = None):
-    log_channel = bot.get_channel(ROLE_REQUEST_CHANNEL_ID)
-    if not log_channel:
-        return await interaction.response.send_message("Log channel not found.", ephemeral=True)
-
-    # Preview color logic for the log embed
-    preview_color = discord.Color.blue()
-    clean_hex = color.replace("#", "") if color else ""
-    if is_valid_hex(clean_hex):
-        preview_color = discord.Color(int(clean_hex, 16))
-
-    request_embed = discord.Embed(
-        title="🎨 New Custom Role Request",
-        color=preview_color,
-        timestamp=interaction.created_at
-    )
-    request_embed.add_field(name="User", value=interaction.user.mention, inline=True)
-    request_embed.add_field(name="Requested Name", value=name, inline=True)
-    request_embed.add_field(name="Requested Color", value=f"`{color or 'Default'}`", inline=True)
-    request_embed.set_footer(text=f"User ID: {interaction.user.id}")
-
-    view = CustomRoleView(requester_id=interaction.user.id, role_name=name, hex_color=color)
-    
-    await log_channel.send(embed=request_embed, view=view)
-    await interaction.response.send_message("✅ Your role request has been submitted!", ephemeral=True)
-
-# -------------------------------------------------
-#  /apply
-# -------------------------------------------------
-
-APPLICATION_LOG_CHANNEL_ID = 1489748153480773722
-
-WELCOME_DM = (
-    "## ❗ | Congratulations on Your Appointment at Winstree Academy\n"
-    "We are pleased to welcome you to the staff team at Winstree Academy.\n\n"
-    "***__Important Information__***\n"
-    "- You are required to complete your Initial Teacher Training within one week of receiving this message.\n"
-    "- All staff members are expected to attend four sessions per week (Sunday–Saturday).\n"
-    "- High standards of grammar, punctuation, and spelling (SPaG) must be maintained at all times while on school grounds.\n"
-    "- Staff sessions begin at 19:45 (UK time) and conclude at 21:10.\n\n"
-    "Your teaching name and assigned roles have already been recorded. Please run /profile in the server to review your details.\n\n"
-    "We look forward to your attendance at today's session, commencing at 19:45 BST in the briefing room.\n\n"
-    "*Senior Leadership Team*\n"
-    "**Winstree Academy**"
-)
-
-REJECTION_DM = (
-    "## ❌ | Application Unsuccessful — Winstree Academy\n"
-    "Thank you for taking the time to apply for a staff position at Winstree Academy.\n\n"
-    "After careful consideration, we regret to inform you that your application has been unsuccessful at this time.\n\n"
-    "You are welcome to reapply in the future. If you have any questions, please do not hesitate to reach out to a member of the Senior Leadership Team.\n\n"
-    "*Senior Leadership Team*\n"
-    "**Winstree Academy**"
-)
-
-
-class ApplicationModal(discord.ui.Modal, title="Winstree Academy — Staff Application"):
-
-    roblox_username = discord.ui.TextInput(
-        label="Roblox Username",
-        placeholder="Enter your exact Roblox username",
-        required=True,
-        max_length=50,
-    )
-
-    teaching_name = discord.ui.TextInput(
-        label="Desired Teaching Name - Full name required or will be denied.",
-        placeholder="e.g. Miss Zoe Parker",
-        required=True,
-        max_length=60,
-    )
-
-    reason = discord.ui.TextInput(
-        label="Why do you want to be staff?",
-        placeholder="Write a couple of sentences about why you'd like to join the team...",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        min_length=30,
-        max_length=500,
-    )
-
-    def __init__(self, age_range: str):
-        super().__init__()
-        self.age_range = age_range
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        log_channel = interaction.client.get_channel(APPLICATION_LOG_CHANNEL_ID)
-        if not log_channel:
-            await interaction.followup.send(
-                "❌ Could not find the application log channel. Please contact an administrator.",
-                ephemeral=True
-            )
-            return
-
-        embed = discord.Embed(
-            title="📋 New Staff Application",
-            color=discord.Color.orange(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="Applicant",             value=interaction.user.mention,   inline=True)
-        embed.add_field(name="Discord ID",            value=interaction.user.id,        inline=True)
-        embed.add_field(name="Roblox Username",       value=self.roblox_username.value, inline=True)
-        embed.add_field(name="Desired Teaching Name", value=self.teaching_name.value,   inline=True)
-        embed.add_field(name="Age Range",             value=self.age_range,             inline=True)
-        embed.add_field(name="Why do you want to be staff?", value=self.reason.value,  inline=False)
-        embed.set_footer(text=f"User ID: {interaction.user.id}")
-
-        view = ApplicationReviewView(
-            applicant_id=interaction.user.id,
-            roblox_username=self.roblox_username.value,
-            teaching_name=self.teaching_name.value,
-            age_range=self.age_range,
-            reason=self.reason.value,
-        )
-
-        await log_channel.send(content="@here", embed=embed, view=view)
-        await interaction.followup.send(
-            "✅ Your application has been submitted! You will receive a DM once it has been reviewed by the Senior Leadership Team.",
-            ephemeral=True
-        )
-
-
-class AgeRangeSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Under 9",  value="U9"),
-            discord.SelectOption(label="9–12",     value="9-12"),
-            discord.SelectOption(label="13–15",    value="13-15"),
-            discord.SelectOption(label="16–17",    value="16-17"),
-            discord.SelectOption(label="18–20",    value="18-20"),
-            discord.SelectOption(label="21+",      value="21+"),
-        ]
-        super().__init__(
-            placeholder="Select your age range...",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        age_range = self.values[0]
-
-        if age_range == "U9":
-            await interaction.response.send_message(
-                "❌ You must be aged 9 or over to apply for a staff position at Winstree Academy.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_modal(ApplicationModal(age_range=age_range))
-
-
-class AgeRangeView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
-        self.add_item(AgeRangeSelect())
-
-
-class ApplicationReviewView(discord.ui.View):
-    def __init__(self, applicant_id: int, roblox_username: str, teaching_name: str, age_range: str, reason: str):
-        super().__init__(timeout=None)
-        self.applicant_id    = applicant_id
-        self.roblox_username = roblox_username
-        self.teaching_name   = teaching_name
-        self.age_range       = age_range
-        self.reason          = reason
-
-    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅", custom_id="app_accept")
-    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-
-        guild  = interaction.guild
-        member = None
-        try:
-            member = await guild.fetch_member(self.applicant_id)
-        except Exception:
-            pass
-
-        # --- Determine area based on age range ---
-        if self.age_range in ("9-12", "13-15", "16-17"):
-            area = "Academy"
-        else:  # 18-20 and 21+
-            area = "Sixth Form"
-
-        # --- Write to Google Sheet via Apps Script ---
-        sheet_status = ""
-        params = {
-            "action":        "hire",
-            "teachingName":  self.teaching_name,
-            "staffUsername": self.roblox_username,
-            "area":          area,
-            "position":      "School Staff",
-            "discordId":     str(self.applicant_id),
-        }
-        try:
-            status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
-            if status == 200 and "error" not in response_text.lower():
-                sheet_status = "✅ Added to sheet"
-            else:
-                sheet_status = f"⚠️ Sheet error (HTTP {status}): {response_text[:200]}"
-        except Exception as e:
-            sheet_status = f"⚠️ Sheet exception: {e}"
-
-        # --- Send welcome DM ---
-        dm_status = ""
-        if member:
-            try:
-                await member.send(WELCOME_DM)
-                dm_status = "✅ Welcome DM sent"
-            except discord.Forbidden:
-                dm_status = "⚠️ Could not DM (DMs may be disabled)"
-            except Exception as e:
-                dm_status = f"⚠️ DM error: {e}"
-        else:
-            dm_status = "⚠️ Member not found in server"
-
-        # --- Update the log embed ---
-        for child in self.children:
-            child.disabled = True
-
-        original_embed = interaction.message.embeds[0]
-        original_embed.title = "✅ Application Accepted"
-        original_embed.color = discord.Color.green()
-        original_embed.add_field(name="Area Assigned", value=area,                      inline=True)
-        original_embed.add_field(name="Sheet",         value=sheet_status,              inline=False)
-        original_embed.add_field(name="DM",            value=dm_status,                 inline=False)
-        original_embed.add_field(name="Reviewed By",   value=interaction.user.mention,  inline=False)
-
-        await interaction.message.edit(embed=original_embed, view=self)
-        refresh_staff_names_cache()
-
-    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="app_deny")
-    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-
-        guild  = interaction.guild
-        member = None
-        try:
-            member = await guild.fetch_member(self.applicant_id)
-        except Exception:
-            pass
-
-        # --- Send rejection DM ---
-        dm_status = ""
-        if member:
-            try:
-                await member.send(REJECTION_DM)
-                dm_status = "✅ Rejection DM sent"
-            except discord.Forbidden:
-                dm_status = "⚠️ Could not DM (DMs may be disabled)"
-            except Exception as e:
-                dm_status = f"⚠️ DM error: {e}"
-        else:
-            dm_status = "⚠️ Member not found in server"
-
-        # --- Update the log embed ---
-        for child in self.children:
-            child.disabled = True
-
-        original_embed = interaction.message.embeds[0]
-        original_embed.title = "❌ Application Denied"
-        original_embed.color = discord.Color.red()
-        original_embed.add_field(name="DM",          value=dm_status,               inline=False)
-        original_embed.add_field(name="Reviewed By", value=interaction.user.mention, inline=False)
-
-        await interaction.message.edit(embed=original_embed, view=self)
-
-
-@bot.tree.command(name="apply", description="Apply for a staff position at Winstree Academy")
-@cooldown()
-async def apply(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "## 📋 Winstree Academy — Staff Application\nPlease select your age range below to begin your application.",
         view=AgeRangeView(),
         ephemeral=True
     )
