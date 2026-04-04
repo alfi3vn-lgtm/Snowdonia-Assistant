@@ -695,7 +695,7 @@ class RobloxAPI:
         roles = self.get_group_roles()
         if not roles:
             return None
-        rank_1 = next((r for r in roles if r["rank"] == 1), None)
+        rank_1 = next((r for r in roles if r["rank"] == 6), None)
         if rank_1:
             return rank_1["id"]
         return sorted(roles, key=lambda r: r["rank"])[0]["id"]
