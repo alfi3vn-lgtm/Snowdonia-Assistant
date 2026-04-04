@@ -1648,10 +1648,6 @@ async def bot_status(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-
-# -------------------------------------------------
-#  /edit
-# -------------------------------------------------
 @bot.tree.command(name="edit", description="Edit a staff member's details")
 @app_commands.describe(staff_name="Select the staff member to edit", field="Which field to update", value="New value for the field")
 @app_commands.choices(field=[
@@ -1695,10 +1691,10 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                 else:
                     embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
 
-            # --- Discord role + nickname update ---
+            # --- Always sync Discord roles + nickname ---
             guild = interaction.guild
             if guild:
-                # Resolve the staff member's Discord ID
+                # Work out the Discord ID to target
                 if field == "discord_id":
                     target_discord_id = value
                 else:
@@ -1707,18 +1703,23 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                 if target_discord_id and target_discord_id != "N/A":
                     member = await get_discord_member_by_id(guild, target_discord_id)
                     if member:
-                        # Determine the effective role and teaching name after this edit
+                        # Work out the effective role and teaching name AFTER this edit
                         if field == "role":
                             effective_role          = value
-                            effective_teaching_name = staff_name  # name hasn't changed
+                            effective_teaching_name = staff_name
                         elif field == "teaching_name":
                             effective_teaching_name = value
-                            effective_role = await get_role_for_staff(staff_name)
-                        else:
+                            effective_role          = await get_role_for_staff(staff_name)
+                        elif field == "discord_id":
+                            # New Discord ID — fetch role and name from sheet
+                            effective_role          = await get_role_for_staff(staff_name)
                             effective_teaching_name = staff_name
-                            effective_role = await get_role_for_staff(staff_name)
+                        else:
+                            # area, roblox_username, etc — role/name unchanged
+                            effective_role          = await get_role_for_staff(staff_name)
+                            effective_teaching_name = staff_name
 
-                        if effective_role:
+                        if effective_role and effective_role != "N/A":
                             await apply_discord_roles_and_nick(
                                 guild, member,
                                 effective_role,
