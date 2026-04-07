@@ -2741,7 +2741,7 @@ async def view_removed_staff(interaction: discord.Interaction, staff_name: str):
         if not records:
             await interaction.followup.send(
                 f"❌ No removal record found for **{staff_name}**.",
-                ephemeral=True
+                ephemeral=False
             )
             return
 
@@ -2754,7 +2754,7 @@ async def view_removed_staff(interaction: discord.Interaction, staff_name: str):
         for i, (name, date, reason) in enumerate(records, start=1):
             label = f"Entry {i}" if len(records) > 1 else "Details"
             embed.add_field(name=f"{label} — Teaching Name",   value=name,   inline=True)
-            embed.add_field(name=f"{label} — Date of Removal", value=date,   inline=True)
+            embed.add_field(name=f"{label} — Date of Removal", value=date,   inline=False)
             embed.add_field(name=f"{label} — Reason",          value=reason, inline=False)
 
             if i < len(records):
