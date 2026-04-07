@@ -3041,7 +3041,7 @@ REJECTION_DM = (
 )
 
 
-class ApplicationModal(discord.ui.Modal, title="Winstree Academy Staff Application"):
+class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staff Application"):
 
     roblox_username = discord.ui.TextInput(
         label="Roblox Username",
