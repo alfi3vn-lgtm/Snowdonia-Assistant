@@ -246,9 +246,9 @@ ROLE_NAME_MAP = {
     "Site Manager":                  "Site Manager",
     "Assistant Headteacher":         "Assistant Headteacher",
     "Deputy Headteacher":            "Deputy Headteacher",
-    "Senior Deputy Headteacher":     "Senior Deputy Headteacher",
     "Headteacher":                   "Headteacher",
     "Executive Headteacher":         "Executive Headteacher",
+    "Chief Education Officer":       "Chief Education Officer",
 }
 
 # Roles with unlimited openings — everything else has exactly 1 spot
@@ -372,7 +372,7 @@ def format_display_name(teaching_name: str, sheet_role: str) -> str:
 
 # Roblox-rank-named Discord roles (match ROLE_NAME_MAP values)
 DISCORD_RANK_ROLE_IDS: dict[str, int] = {
-    "Senior Deputy Headteacher": 1484861142907097108,
+    "Headteacher":               1484861142907097108,
     "Deputy Headteacher":        1484861834191437858,
     "Assistant Headteacher":     1484861922313506939,
     "Site Staff":                1484862019873148998,
@@ -421,11 +421,11 @@ def get_discord_roles_for_sheet_role(sheet_role: str) -> list[int]:
     site       = R["Site Staff"]
     aht        = R["Assistant Headteacher"]
     dht        = R["Deputy Headteacher"]
-    sdht       = R["Senior Deputy Headteacher"]
+    ht       = R["Headteacher"]
 
     mapping: dict[str, list[int]] = {
         # SLT
-        "Senior Deputy Headteacher": [staff, slt, sdht],
+        "Headteacher": [staff, slt, ht],
         "Deputy Headteacher":        [staff, slt, dht],
         "Assistant Headteacher":     [staff, slt, aht],
         # Level heads — Upper (Sixth Form)
@@ -473,7 +473,7 @@ def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
 
     suffix_map: dict[str, str] = {
         # SLT — use [SLT] tag
-        "Senior Deputy Headteacher": "[SLT]",
+        "Headteacher":               "[SLT]",
         "Deputy Headteacher":        "[SLT]",
         "Assistant Headteacher":     "[SLT]",
         # Level heads
