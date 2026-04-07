@@ -2761,7 +2761,7 @@ async def view_removed_staff(interaction: discord.Interaction, staff_name: str):
                 embed.add_field(name="\u200b", value="─" * 30, inline=False)  # divider
 
         embed.set_footer(text=f"Remove Staff Log · {len(records)} record(s) found")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=False)
 
     except gspread.WorksheetNotFound:
         await interaction.followup.send(
