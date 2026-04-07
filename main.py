@@ -2692,6 +2692,84 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
     if chunk.strip():
         await interaction.followup.send(f"```\n{chunk.strip()}\n```", ephemeral=True)
 
+# -------------------------------------------------
+#  /viewremovedstaff
+# -------------------------------------------------
+
+async def removed_staff_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete that lists names from the Remove Staff Log sheet (col B, rows 5+)."""
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet("Remove Staff Log").get_all_values()
+        )
+        names = []
+        for row in all_data[4:]:  # data starts at row 5 (index 4)
+            name = safe_get(row, 1)  # column B = index 1
+            if name and name != "N/A" and name not in names:
+                names.append(name)
+
+        filtered = [n for n in names if current.lower() in n.lower()]
+        return [app_commands.Choice(name=n, value=n) for n in filtered[:25]]
+    except Exception as e:
+        print(f"[viewremovedstaff] Autocomplete error: {e}")
+        return []
+
+
+@bot.tree.command(name="viewremovedstaff", description="View a removed staff member's departure record")
+@app_commands.describe(staff_name="Select the removed staff member")
+@app_commands.autocomplete(staff_name=removed_staff_autocomplete)
+@cooldown()
+async def view_removed_staff(interaction: discord.Interaction, staff_name: str):
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet("Remove Staff Log").get_all_values()
+        )
+
+        # Collect ALL records for this person (in case they were removed more than once)
+        records = []
+        for row in all_data[4:]:  # rows 5+ are data
+            name = safe_get(row, 1)  # col B — Teaching Name
+            if name.strip().lower() == staff_name.strip().lower():
+                date   = safe_get(row, 2)  # col C — Date of Removal
+                reason = safe_get(row, 3)  # col D — Reason
+                records.append((name, date, reason))
+
+        if not records:
+            await interaction.followup.send(
+                f"❌ No removal record found for **{staff_name}**.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"🗂️ Removal Record — {staff_name}",
+            color=discord.Color.red(),
+            timestamp=datetime.now(),
+        )
+
+        for i, (name, date, reason) in enumerate(records, start=1):
+            label = f"Entry {i}" if len(records) > 1 else "Details"
+            embed.add_field(name=f"{label} — Teaching Name",   value=name,   inline=True)
+            embed.add_field(name=f"{label} — Date of Removal", value=date,   inline=True)
+            embed.add_field(name=f"{label} — Reason",          value=reason, inline=False)
+
+            if i < len(records):
+                embed.add_field(name="\u200b", value="─" * 30, inline=False)  # divider
+
+        embed.set_footer(text=f"Remove Staff Log · {len(records)} record(s) found")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send(
+            "❌ 'Remove Staff Log' sheet not found.", ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(f"❌ Unexpected error: {e}", ephemeral=True)
+
 
 # -------------------------------------------------
 #  /diagnoseroblox
