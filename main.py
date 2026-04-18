@@ -220,11 +220,9 @@ TIMETABLE_POST_TIME               = "21:15"
 YEAR_LEADER_ROLE_ID               = 0
 TIMETABLE_ADMIN_ROLE_ID           = 1438202314476228678
 
-# Cookie is read from env — never hardcoded
 ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
-ROBLOX_GROUP_ID = 779411059   # integer, used by RobloxAPI
+ROBLOX_GROUP_ID = 779411059
 
-# Maps sheet role name → Roblox group rank name
 ROLE_NAME_MAP = {
     "School Staff":                  "Teaching Staff",
     "Deputy Head of Year 7":         "Deputy Head of Year",
@@ -254,7 +252,6 @@ ROLE_NAME_MAP = {
     "Chief Education Officer":       "Chief Education Officer",
 }
 
-# Roles with unlimited openings — everything else has exactly 1 spot
 INFINITE_ROLES = {
     "School Staff",
 }
@@ -271,8 +268,8 @@ ALL_STAFF_DATA_START = 5
 ALL_STAFF_NAME_COL   = 3
 
 CURRENT_STAFF_DATA_START     = 5
-CURRENT_STAFF_NAME_COL       = 3   # D — Teaching Name
-CURRENT_STAFF_ATTENDANCE_COL = 9   # J — Attendance This Week
+CURRENT_STAFF_NAME_COL       = 3
+CURRENT_STAFF_ATTENDANCE_COL = 9
 
 ATTEND_DATA_START  = 5
 ATTEND_NAME_COL    = 1
@@ -313,7 +310,6 @@ FIELD_MAP = {
     "discord_id":      ("Discord User ID",  "I6"),
 }
 
-# Channel to notify when a blocked application attempt occurs
 BLOCKED_APP_LOG_CHANNEL_ID = 1495061332741853438
 
 
@@ -635,16 +631,31 @@ async def check_application_eligibility(discord_id: str) -> tuple[bool, str]:
             lambda: spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET).get_all_values()
         )
         two_weeks_ago = datetime.now() - timedelta(weeks=2)
+
         for row in rsl_data[RSL_DATA_START - 1:]:
             row_discord_id = safe_get(row, RSL_DISCORD_ID_COL)
-            if row_discord_id == discord_id:
-                date_str = safe_get(row, RSL_DATE_COL)
+            if row_discord_id != discord_id:
+                continue
+
+            date_str = safe_get(row, RSL_DATE_COL)
+            if not date_str or date_str == "N/A":
+                continue
+
+            removal_date = None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y", "%d %B %Y", "%Y/%m/%d"):
                 try:
-                    removal_date = datetime.strptime(date_str, "%Y-%m-%d")
-                    if removal_date > two_weeks_ago:
-                        return False, "recent_staff"
+                    removal_date = datetime.strptime(date_str, fmt)
+                    break
                 except ValueError:
-                    pass
+                    continue
+
+            if removal_date is None:
+                print(f"[Apply] Could not parse removal date '{date_str}' for Discord ID {discord_id} — skipping row")
+                continue
+
+            if removal_date > two_weeks_ago:
+                return False, "recent_staff"
+
     except gspread.WorksheetNotFound:
         print(f"[Apply] '{REMOVE_STAFF_LOG_SHEET}' sheet not found — skipping recent-staff check")
     except Exception as e:
@@ -3289,7 +3300,6 @@ async def customrolerequest(interaction: discord.Interaction, name: str, color: 
 
 APPLICATION_LOG_CHANNEL_ID = 1489748153480773722
 
-# DM sent when an application cannot proceed (blacklisted or recent staff)
 APPLICATION_BLOCKED_DM = "Oops! You can't apply for that position right now. Try again later!"
 
 WELCOME_DM = (
@@ -3348,16 +3358,14 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        # ── Eligibility checks ─────────────────────────────────────────────
         discord_id = str(interaction.user.id)
         can_apply, block_reason = await check_application_eligibility(discord_id)
 
         if not can_apply:
-            # Send the generic DM so the user knows without revealing why
             try:
                 await interaction.user.send(APPLICATION_BLOCKED_DM)
             except Exception:
-                pass  # DMs disabled — nothing we can do
+                pass
 
             await interaction.followup.send(
                 "❌ You are not currently eligible to apply. Please check your DMs.",
@@ -3366,7 +3374,6 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
 
             print(f"[Apply] Blocked {interaction.user} (ID: {discord_id}) — reason: {block_reason}")
 
-            # ── Notify the staff alert channel ─────────────────────────────
             blocked_channel = interaction.client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
             if blocked_channel:
                 if block_reason == "blacklisted":
@@ -3396,9 +3403,7 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
                     await blocked_channel.send(embed=blocked_embed)
                 except Exception as e:
                     print(f"[Apply] Failed to send blocked notification: {e}")
-            # ───────────────────────────────────────────────────────────────
             return
-        # ───────────────────────────────────────────────────────────────────
 
         log_channel = interaction.client.get_channel(APPLICATION_LOG_CHANNEL_ID)
         if not log_channel:
