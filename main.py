@@ -72,6 +72,9 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "viewstaff":            10,
     "requestname":          30,
     "requestdisplayname":   100,
+    "staffblacklist":       15,
+    "unblackliststaff":     15,
+    "syncstaff":            15,
 }
 
 def cooldown(command_name: str | None = None):
@@ -256,11 +259,13 @@ INFINITE_ROLES = {
     "School Staff",
 }
 
-ALL_STAFF_SHEET     = "All Staff"
-CURRENT_STAFF_SHEET = "Current Staff"
-ATTENDANCE_SHEET    = "Attendance Register"
-ROLES_LIST_SHEET    = "Roles List"
-EDIT_STAFF_SHEET    = "Edit Staff"
+ALL_STAFF_SHEET          = "All Staff"
+CURRENT_STAFF_SHEET      = "Current Staff"
+ATTENDANCE_SHEET         = "Attendance Register"
+ROLES_LIST_SHEET         = "Roles List"
+EDIT_STAFF_SHEET         = "Edit Staff"
+REMOVE_STAFF_LOG_SHEET   = "Remove Staff Log"
+BLACKLISTED_STAFF_SHEET  = "Blacklisted Staff"
 
 ALL_STAFF_DATA_START = 5
 ALL_STAFF_NAME_COL   = 3
@@ -274,6 +279,32 @@ ATTEND_NAME_COL    = 1
 ATTEND_CHECK_START = 2
 ATTEND_CHECK_END   = 9
 
+# ------------------------------------------------------------------
+#  Remove Staff Log column layout (1-indexed columns, 0-indexed below)
+#  Col B (index 1) = Teaching Name
+#  Col C (index 2) = Date of Removal
+#  Col D (index 3) = Discord ID
+#  Col E (index 4) = Reason for Removal
+# ------------------------------------------------------------------
+RSL_NAME_COL       = 1   # Col B
+RSL_DATE_COL       = 2   # Col C
+RSL_DISCORD_ID_COL = 3   # Col D
+RSL_REASON_COL     = 4   # Col E
+RSL_DATA_START     = 5   # First data row
+
+# ------------------------------------------------------------------
+#  Blacklisted Staff column layout
+#  Col B (index 1) = Discord ID
+#  Col C (index 2) = Roblox Username
+#  Col D (index 3) = Date of Blacklist
+#  Col E (index 4) = Reason
+# ------------------------------------------------------------------
+BL_DISCORD_ID_COL = 1   # Col B
+BL_ROBLOX_COL     = 2   # Col C
+BL_DATE_COL       = 3   # Col D
+BL_REASON_COL     = 4   # Col E
+BL_DATA_START     = 5   # First data row
+
 FIELD_MAP = {
     "role":            ("Role",             "C6"),
     "roblox_username": ("Roblox Username",  "D6"),
@@ -282,12 +313,14 @@ FIELD_MAP = {
     "discord_id":      ("Discord User ID",  "I6"),
 }
 
+# Channel to notify when a blocked application attempt occurs
+BLOCKED_APP_LOG_CHANNEL_ID = 1495061332741853438
+
 
 # -------------------------------------------------
 #  NAME INITIALING LOGIC
 # -------------------------------------------------
 
-# Roblox rank names that get initialled display names on Discord
 INITIALLED_ROBLOX_RANKS = {
     "Teaching Staff",
     "Deputy Head of Year",
@@ -296,15 +329,12 @@ INITIALLED_ROBLOX_RANKS = {
     "Head of Level",
 }
 
-# Sheet role names that get initialled display names on Discord
-# (derived from ROLE_NAME_MAP, but listed explicitly for clarity)
 INITIALLED_SHEET_ROLES = {
     sheet_role
     for sheet_role, roblox_rank in ROLE_NAME_MAP.items()
     if roblox_rank in INITIALLED_ROBLOX_RANKS
 }
 
-# Known honorific / title prefixes (case-insensitive match)
 KNOWN_TITLES = {
     "mr", "mrs", "miss", "ms", "mx", "dr", "prof", "professor",
     "sir", "rev", "reverend", "fr", "father", "lord", "lady",
@@ -312,55 +342,30 @@ KNOWN_TITLES = {
 
 
 def initial_middle_names(full_name: str) -> str:
-    """
-    Given a full teaching name such as "Miss Zoe Parker" or "Dr James Andrew Smith",
-    return the name with all parts EXCEPT the title and the last name initialled.
-
-    Examples
-    --------
-    "Miss Zoe Parker"          → "Miss Z Parker"
-    "Mr James Andrew Smith"    → "Mr J Smith"        (middle names dropped, first initialled)
-    "Dr Emily Clarke"          → "Dr E Clarke"
-    "Zoe Parker"               → "Z Parker"           (no title)
-    "Parker"                   → "Parker"              (single word — unchanged)
-    """
     parts = full_name.strip().split()
 
     if len(parts) <= 1:
-        # Nothing to initial
         return full_name
 
-    # Detect whether the first word is an honorific
     has_title = parts[0].lower().rstrip(".") in KNOWN_TITLES
 
     if has_title:
         if len(parts) == 2:
-            # "Miss Parker" — only title + surname, nothing to initial
             return full_name
-        title   = parts[0]
-        surname = parts[-1]
-        # Initial the first name; drop any middle names
+        title         = parts[0]
+        surname       = parts[-1]
         first_initial = parts[1][0].upper() + "."
         return f"{title} {first_initial} {surname}"
     else:
         if len(parts) == 2:
-            # "Zoe Parker" — initial first name
             first_initial = parts[0][0].upper() + "."
             return f"{first_initial} {parts[1]}"
-        # "James Andrew Smith" — initial first name, drop middles
         first_initial = parts[0][0].upper() + "."
-        surname = parts[-1]
+        surname       = parts[-1]
         return f"{first_initial} {surname}"
 
 
 def format_display_name(teaching_name: str, sheet_role: str) -> str:
-    """
-    Return the correctly formatted display name for a staff member.
-
-    Roles that map to Teaching Staff / Head of Year / Deputy Head of Year /
-    Head of Level / Deputy Head of Level  →  initialled first name.
-    All other roles (SLT, Site, etc.)     →  full teaching name as stored.
-    """
     if sheet_role in INITIALLED_SHEET_ROLES:
         return initial_middle_names(teaching_name)
     return teaching_name
@@ -370,74 +375,62 @@ def format_display_name(teaching_name: str, sheet_role: str) -> str:
 #  DISCORD ROLE & NICKNAME CONFIG
 # -------------------------------------------------
 
-# Roblox-rank-named Discord roles (match ROLE_NAME_MAP values)
 DISCORD_RANK_ROLE_IDS: dict[str, int] = {
-    "Headteacher":               1484861142907097108,
-    "Deputy Headteacher":        1484861834191437858,
-    "Assistant Headteacher":     1484861922313506939,
-    "Site Staff":                1484862019873148998,
-    "Head of Level":             1484862221644206230,
-    "Deputy Head of Level":      1484862355090309152,
-    "Head of Year":              1484862436061347983,
-    "Deputy Head of Year":       1484862545063051340,
-    "Teaching Staff":            1484862783626543185,
+    "Headteacher":           1484861142907097108,
+    "Deputy Headteacher":    1484861834191437858,
+    "Assistant Headteacher": 1484861922313506939,
+    "Site Staff":            1484862019873148998,
+    "Head of Level":         1484862221644206230,
+    "Deputy Head of Level":  1484862355090309152,
+    "Head of Year":          1484862436061347983,
+    "Deputy Head of Year":   1484862545063051340,
+    "Teaching Staff":        1484862783626543185,
 }
 
-# Extra grouping / leadership roles
 DISCORD_EXTRA_ROLE_IDS: dict[str, int] = {
-    "Senior Leadership Team":  1484862178698727557,
-    "Year Leadership Team":    1484862740945174569,
-    "Staff":                   1484863012933210143,
-    "Sixth Form Leadership":   1485053144952995911,
-    "Year 11 Leadership":      1485053638400540742,
-    "Year 10 Leadership":      1485053691500429372,
-    "Year 9 Leadership":       1485053716859060436,
-    "Year 8 Leadership":       1485053745531195432,
-    "Year 7 Leadership":       1485053768939864254,
+    "Senior Leadership Team": 1484862178698727557,
+    "Year Leadership Team":   1484862740945174569,
+    "Staff":                  1484863012933210143,
+    "Sixth Form Leadership":  1485053144952995911,
+    "Year 11 Leadership":     1485053638400540742,
+    "Year 10 Leadership":     1485053691500429372,
+    "Year 9 Leadership":      1485053716859060436,
+    "Year 8 Leadership":      1485053745531195432,
+    "Year 7 Leadership":      1485053768939864254,
 }
 
-# All managed role IDs combined — used when clearing roles before re-applying
 ALL_MANAGED_ROLE_IDS: set[int] = (
     set(DISCORD_RANK_ROLE_IDS.values()) | set(DISCORD_EXTRA_ROLE_IDS.values())
 )
 
 
 def get_discord_roles_for_sheet_role(sheet_role: str) -> list[int]:
-    """
-    Return the list of Discord role IDs that should be assigned
-    to a member hired/edited into `sheet_role`.
-    """
     R = DISCORD_RANK_ROLE_IDS
     E = DISCORD_EXTRA_ROLE_IDS
-    staff      = E["Staff"]
-    slt        = E["Senior Leadership Team"]
-    ylt        = E["Year Leadership Team"]
-    sf_lead    = E["Sixth Form Leadership"]
-    hol        = R["Head of Level"]
-    dhol       = R["Deputy Head of Level"]
-    hoy        = R["Head of Year"]
-    dhoy       = R["Deputy Head of Year"]
-    ts         = R["Teaching Staff"]
-    site       = R["Site Staff"]
-    aht        = R["Assistant Headteacher"]
-    dht        = R["Deputy Headteacher"]
-    ht       = R["Headteacher"]
+    staff   = E["Staff"]
+    slt     = E["Senior Leadership Team"]
+    ylt     = E["Year Leadership Team"]
+    sf_lead = E["Sixth Form Leadership"]
+    hol     = R["Head of Level"]
+    dhol    = R["Deputy Head of Level"]
+    hoy     = R["Head of Year"]
+    dhoy    = R["Deputy Head of Year"]
+    ts      = R["Teaching Staff"]
+    site    = R["Site Staff"]
+    aht     = R["Assistant Headteacher"]
+    dht     = R["Deputy Headteacher"]
+    ht      = R["Headteacher"]
 
     mapping: dict[str, list[int]] = {
-        # SLT
-        "Headteacher": [staff, slt, ht],
-        "Deputy Headteacher":        [staff, slt, dht],
-        "Assistant Headteacher":     [staff, slt, aht],
-        # Level heads — Upper (Sixth Form)
+        "Headteacher":                 [staff, slt, ht],
+        "Deputy Headteacher":          [staff, slt, dht],
+        "Assistant Headteacher":       [staff, slt, aht],
         "Head of Upper Level":         [staff, ylt, sf_lead, hol],
         "Deputy Head of Upper Level":  [staff, ylt, sf_lead, dhol],
-        # Level heads — Middle (Y10+Y11)
         "Head of Middle Level":        [staff, ylt, E["Year 11 Leadership"], E["Year 10 Leadership"], hol],
         "Deputy Head of Middle Level": [staff, ylt, E["Year 11 Leadership"], E["Year 10 Leadership"], dhol],
-        # Level heads — Lower (Y7+Y8+Y9)
         "Head of Lower Level":         [staff, ylt, E["Year 9 Leadership"], E["Year 8 Leadership"], E["Year 7 Leadership"], hol],
         "Deputy Head of Lower Level":  [staff, ylt, E["Year 9 Leadership"], E["Year 8 Leadership"], E["Year 7 Leadership"], dhol],
-        # Year / SF heads
         "Head of Sixth Form":          [staff, ylt, sf_lead, hoy],
         "Deputy Head of Sixth Form":   [staff, ylt, sf_lead, dhoy],
         "Head of Year 11":             [staff, ylt, E["Year 11 Leadership"], hoy],
@@ -450,7 +443,6 @@ def get_discord_roles_for_sheet_role(sheet_role: str) -> list[int]:
         "Deputy Head of Year 8":       [staff, ylt, E["Year 8 Leadership"], dhoy],
         "Head of Year 7":              [staff, ylt, E["Year 7 Leadership"], hoy],
         "Deputy Head of Year 7":       [staff, ylt, E["Year 7 Leadership"], dhoy],
-        # Teaching / Site
         "School Staff":                [staff, ts],
         "Site Staff":                  [staff, site],
         "Site Manager":                [staff, site],
@@ -459,48 +451,34 @@ def get_discord_roles_for_sheet_role(sheet_role: str) -> list[int]:
 
 
 def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
-    """
-    Return the correctly formatted Discord nickname for a staff member
-    based on their sheet role and teaching name.
-
-    - Roles that map to Teaching Staff / Head of Year / Deputy Head of Year /
-      Head of Level / Deputy Head of Level  →  initialled first name + suffix
-    - SLT roles  →  full name + [SLT] tag
-    - All other roles  →  plain full name
-    """
-    # Apply initialling where required
     display_name = format_display_name(teaching_name, sheet_role)
 
     suffix_map: dict[str, str] = {
-        # SLT — use [SLT] tag
-        "Headteacher":               "[SLT]",
-        "Deputy Headteacher":        "[SLT]",
-        "Assistant Headteacher":     "[SLT]",
-        # Level heads
+        "Headteacher":                 "[SLT]",
+        "Deputy Headteacher":          "[SLT]",
+        "Assistant Headteacher":       "[SLT]",
         "Head of Upper Level":         "| HOUL",
         "Deputy Head of Upper Level":  "| DHOUL",
         "Head of Middle Level":        "| HOML",
         "Deputy Head of Middle Level": "| DHOML",
         "Head of Lower Level":         "| HOLL",
         "Deputy Head of Lower Level":  "| DHOLL",
-        # Year / SF heads
-        "Head of Sixth Form":        "| HOSF",
-        "Deputy Head of Sixth Form": "| DHOSF",
-        "Head of Year 7":            "| HOY7",
-        "Deputy Head of Year 7":     "| DHOY7",
-        "Head of Year 8":            "| HOY8",
-        "Deputy Head of Year 8":     "| DHOY8",
-        "Head of Year 9":            "| HOY9",
-        "Deputy Head of Year 9":     "| DHOY9",
-        "Head of Year 10":           "| HOY10",
-        "Deputy Head of Year 10":    "| DHOY10",
-        "Head of Year 11":           "| HOY11",
-        "Deputy Head of Year 11":    "| DHOY11",
+        "Head of Sixth Form":          "| HOSF",
+        "Deputy Head of Sixth Form":   "| DHOSF",
+        "Head of Year 7":              "| HOY7",
+        "Deputy Head of Year 7":       "| DHOY7",
+        "Head of Year 8":              "| HOY8",
+        "Deputy Head of Year 8":       "| DHOY8",
+        "Head of Year 9":              "| HOY9",
+        "Deputy Head of Year 9":       "| DHOY9",
+        "Head of Year 10":             "| HOY10",
+        "Deputy Head of Year 10":      "| DHOY10",
+        "Head of Year 11":             "| HOY11",
+        "Deputy Head of Year 11":      "| DHOY11",
     }
 
     suffix = suffix_map.get(sheet_role)
     if suffix is None:
-        # School Staff, Site Staff, Site Manager, etc. — plain display name
         return display_name
 
     return f"{display_name} {suffix}"
@@ -514,19 +492,12 @@ async def apply_discord_roles_and_nick(
     *,
     embed: discord.Embed | None = None,
 ) -> None:
-    """
-    Remove all managed roles from `member`, assign the correct ones for
-    `sheet_role`, and update their nickname.  Appends status fields to
-    `embed` if provided.
-    """
-    # --- roles ---
     desired_ids = get_discord_roles_for_sheet_role(sheet_role)
     desired_role_objects = [
         guild.get_role(rid) for rid in desired_ids
         if guild.get_role(rid) is not None
     ]
 
-    # Roles to remove: managed roles the member currently has
     roles_to_remove = [r for r in member.roles if r.id in ALL_MANAGED_ROLE_IDS]
 
     try:
@@ -544,9 +515,7 @@ async def apply_discord_roles_and_nick(
         if embed:
             embed.add_field(name="Discord Roles", value=f"⚠️ Error: {e}", inline=False)
 
-    # --- nickname ---
     new_nick = get_nickname_for_sheet_role(teaching_name, sheet_role)
-    # Discord nickname limit is 32 characters
     new_nick = new_nick[:32]
     try:
         await member.edit(nick=new_nick, reason=f"Staff role: {sheet_role}")
@@ -567,9 +536,6 @@ async def clear_discord_roles_and_reset_nick(
     *,
     embed: discord.Embed | None = None,
 ) -> None:
-    """
-    Remove all managed roles and reset nickname to roblox username on removal.
-    """
     roles_to_remove = [r for r in member.roles if r.id in ALL_MANAGED_ROLE_IDS]
     try:
         if roles_to_remove:
@@ -583,7 +549,6 @@ async def clear_discord_roles_and_reset_nick(
         if embed:
             embed.add_field(name="Discord Roles", value=f"⚠️ Error: {e}", inline=False)
 
-    # Reset nickname to Roblox username
     nick = roblox_username[:32] if roblox_username else None
     try:
         await member.edit(nick=nick, reason="Staff removed")
@@ -598,9 +563,8 @@ async def clear_discord_roles_and_reset_nick(
 
 
 async def get_discord_member_by_id(guild: discord.Guild, discord_id: str) -> discord.Member | None:
-    """Fetch a guild member by their Discord ID string. Returns None if not found."""
     try:
-        uid = int(discord_id)
+        uid    = int(discord_id)
         member = guild.get_member(uid)
         if member is None:
             member = await guild.fetch_member(uid)
@@ -610,7 +574,6 @@ async def get_discord_member_by_id(guild: discord.Guild, discord_id: str) -> dis
 
 
 async def get_discord_id_for_staff(teaching_name: str) -> str | None:
-    """Look up a staff member's Discord ID (col H, index 7) by Teaching Name (col D, index 3)."""
     try:
         all_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
@@ -625,7 +588,6 @@ async def get_discord_id_for_staff(teaching_name: str) -> str | None:
 
 
 async def get_role_for_staff(teaching_name: str) -> str | None:
-    """Look up a staff member's Role (col B, index 1) by Teaching Name."""
     try:
         all_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
@@ -646,11 +608,55 @@ print(f"Roblox cookie present: {bool(ROBLOX_COOKIE)}", flush=True)
 
 
 # -------------------------------------------------
-#  ROBLOX API CLASS  (sync requests, run in executor)
+#  APPLICATION ELIGIBILITY HELPERS
+# -------------------------------------------------
+
+async def check_application_eligibility(discord_id: str) -> tuple[bool, str]:
+    """
+    Returns (can_apply, reason_code).
+    reason_code: "blacklisted" | "recent_staff" | ""
+    """
+    # 1. Check blacklist — Discord ID in col B (index 1) of Blacklisted Staff
+    try:
+        bl_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(BLACKLISTED_STAFF_SHEET).get_all_values()
+        )
+        for row in bl_data[BL_DATA_START - 1:]:
+            if safe_get(row, BL_DISCORD_ID_COL) == discord_id:
+                return False, "blacklisted"
+    except gspread.WorksheetNotFound:
+        print(f"[Apply] '{BLACKLISTED_STAFF_SHEET}' sheet not found — skipping blacklist check")
+    except Exception as e:
+        print(f"[Apply] Blacklist check error: {e}")
+
+    # 2. Check recent removal — Discord ID in col D (index 3), date in col C (index 2)
+    try:
+        rsl_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET).get_all_values()
+        )
+        two_weeks_ago = datetime.now() - timedelta(weeks=2)
+        for row in rsl_data[RSL_DATA_START - 1:]:
+            row_discord_id = safe_get(row, RSL_DISCORD_ID_COL)
+            if row_discord_id == discord_id:
+                date_str = safe_get(row, RSL_DATE_COL)
+                try:
+                    removal_date = datetime.strptime(date_str, "%Y-%m-%d")
+                    if removal_date > two_weeks_ago:
+                        return False, "recent_staff"
+                except ValueError:
+                    pass
+    except gspread.WorksheetNotFound:
+        print(f"[Apply] '{REMOVE_STAFF_LOG_SHEET}' sheet not found — skipping recent-staff check")
+    except Exception as e:
+        print(f"[Apply] Recent staff check error: {e}")
+
+    return True, ""
+
+
+# -------------------------------------------------
+#  ROBLOX API CLASS
 # -------------------------------------------------
 class RobloxAPI:
-    """Handles all Roblox API interactions using the working requests pattern."""
-
     def __init__(self, security_cookie: str, group_id: int):
         self.security_cookie = security_cookie.strip()
         self.group_id        = group_id
@@ -734,18 +740,12 @@ class RobloxAPI:
             return False, f"Network error: {e}"
 
 
-# -------------------------------------------------
-#  Instantiate Roblox API
-# -------------------------------------------------
 def get_roblox_api() -> RobloxAPI | None:
     if not ROBLOX_COOKIE:
         return None
     return RobloxAPI(ROBLOX_COOKIE, ROBLOX_GROUP_ID)
 
 
-# -------------------------------------------------
-#  Async wrappers
-# -------------------------------------------------
 async def roblox_get_user_id(username: str) -> int | None:
     api = get_roblox_api()
     if not api:
@@ -890,7 +890,6 @@ def get_available_periods(timetable_data, year):
 
 
 async def get_staff_teaching_name(discord_id: str):
-    """Look up a staff member's Teaching Name (col D, index 3) by Discord ID (col H, index 7)."""
     try:
         all_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
@@ -904,7 +903,6 @@ async def get_staff_teaching_name(discord_id: str):
 
 
 async def get_roblox_username_for_staff(teaching_name: str) -> str | None:
-    """Look up a staff member's Roblox username (col C, index 2) by Teaching Name (col D, index 3)."""
     try:
         all_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
@@ -987,8 +985,8 @@ async def timetable_post_task():
 
 @tasks.loop(minutes=1)
 async def timetable_reminder_task():
-    now = datetime.now()
-    current_time   = now.strftime("%H:%M")
+    now          = datetime.now()
+    current_time = now.strftime("%H:%M")
     reminder_times = ["21:15", "23:00", "07:30", "15:00", "16:30", "18:00", "19:00"]
 
     if current_time not in reminder_times:
@@ -1181,10 +1179,42 @@ async def edit_value_autocomplete(interaction: discord.Interaction, current: str
     if field == 'role':
         return await position_autocomplete(interaction, current)
     elif field == 'area':
-        choices = ["Academy", "Sixth Form"]
+        choices  = ["Academy", "Sixth Form"]
         filtered = [c for c in choices if current.lower() in c.lower()]
         return [app_commands.Choice(name=c, value=c) for c in filtered]
     return []
+
+
+# -------------------------------------------------
+#  BLACKLISTED STAFF AUTOCOMPLETE
+# -------------------------------------------------
+async def blacklisted_staff_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    try:
+        bl_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(BLACKLISTED_STAFF_SHEET).get_all_values()
+        )
+        choices = []
+        guild   = interaction.guild
+        for row in bl_data[BL_DATA_START - 1:]:
+            discord_id = safe_get(row, BL_DISCORD_ID_COL)
+            if not discord_id or discord_id == "N/A":
+                continue
+            display = discord_id
+            if guild:
+                try:
+                    member = guild.get_member(int(discord_id))
+                    if member:
+                        display = f"{member.display_name} ({discord_id})"
+                except Exception:
+                    pass
+            if current.lower() in display.lower():
+                choices.append(app_commands.Choice(name=display[:100], value=discord_id))
+        return choices[:25]
+    except Exception as e:
+        print(f"[unblacklist] Autocomplete error: {e}")
+        return []
 
 
 # -------------------------------------------------
@@ -1648,6 +1678,10 @@ async def bot_status(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
+
+# -------------------------------------------------
+#  /edit
+# -------------------------------------------------
 @bot.tree.command(name="edit", description="Edit a staff member's details")
 @app_commands.describe(staff_name="Select the staff member to edit", field="Which field to update", value="New value for the field")
 @app_commands.choices(field=[
@@ -1679,7 +1713,6 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
             embed.add_field(name="New Value",     value=value,                            inline=True)
             embed.set_footer(text="Staff record has been updated")
 
-            # --- Roblox rank update if role changed ---
             if field == "role":
                 roblox_username = await get_roblox_username_for_staff(staff_name)
                 if roblox_username:
@@ -1691,10 +1724,8 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                 else:
                     embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
 
-            # --- Always sync Discord roles + nickname ---
             guild = interaction.guild
             if guild:
-                # Work out the Discord ID to target
                 if field == "discord_id":
                     target_discord_id = value
                 else:
@@ -1703,7 +1734,6 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                 if target_discord_id and target_discord_id != "N/A":
                     member = await get_discord_member_by_id(guild, target_discord_id)
                     if member:
-                        # Work out the effective role and teaching name AFTER this edit
                         if field == "role":
                             effective_role          = value
                             effective_teaching_name = staff_name
@@ -1711,11 +1741,9 @@ async def edit_staff(interaction: discord.Interaction, staff_name: str, field: s
                             effective_teaching_name = value
                             effective_role          = await get_role_for_staff(staff_name)
                         elif field == "discord_id":
-                            # New Discord ID — fetch role and name from sheet
                             effective_role          = await get_role_for_staff(staff_name)
                             effective_teaching_name = staff_name
                         else:
-                            # area, roblox_username, etc — role/name unchanged
                             effective_role          = await get_role_for_staff(staff_name)
                             effective_teaching_name = staff_name
 
@@ -2007,14 +2035,12 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
             embed.add_field(name="Role",            value=role,                    inline=True)
             embed.set_footer(text="Staff record has been created")
 
-            # --- Roblox rank ---
             success, result = await roblox_set_rank_by_sheet_role(roblox_username, role)
             if success:
                 embed.add_field(name="Roblox Group", value=f"✅ Ranked to **{result}**", inline=False)
             else:
                 embed.add_field(name="Roblox Group", value=f"⚠️ {result}", inline=False)
 
-            # --- Discord roles + nickname ---
             guild = interaction.guild
             if guild:
                 await apply_discord_roles_and_nick(
@@ -2023,7 +2049,6 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
                     embed=embed,
                 )
 
-            # --- Welcome DM ---
             try:
                 await discord_account.send(
                     "## ❗ | Congratulations on Your Appointment at Winstree Academy\n"
@@ -2044,9 +2069,7 @@ async def hire(interaction: discord.Interaction, teaching_name: str, roblox_user
             except Exception as e:
                 embed.add_field(name="Welcome DM", value=f"⚠️ DM error: {e}", inline=False)
 
-            # --- Refresh cache ---
             refresh_staff_names_cache()
-
             await interaction.followup.send(embed=embed)
 
         else:
@@ -2069,7 +2092,6 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
     await interaction.response.defer()
     current_date = datetime.now().strftime("%Y-%m-%d")
 
-    # Look up Roblox username and Discord ID BEFORE removing from sheet
     roblox_username   = await get_roblox_username_for_staff(staff_name)
     target_discord_id = await get_discord_id_for_staff(staff_name)
 
@@ -2090,7 +2112,6 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             embed.add_field(name="Reason",         value=reason,       inline=False)
             embed.set_footer(text="Staff record has been updated")
 
-            # --- Roblox demotion ---
             if roblox_username:
                 success, err = await roblox_demote_to_rank_1(roblox_username)
                 if success:
@@ -2100,7 +2121,6 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             else:
                 embed.add_field(name="Roblox Group", value="⚠️ No Roblox username on file", inline=False)
 
-            # --- Discord roles + nickname reset ---
             guild = interaction.guild
             if guild and target_discord_id and target_discord_id != "N/A":
                 member = await get_discord_member_by_id(guild, target_discord_id)
@@ -2115,9 +2135,7 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             else:
                 embed.add_field(name="Discord", value="⚠️ No Discord ID on file — skipped role/nick update", inline=False)
 
-            # Refresh cache so removed staff no longer appears in autocomplete
             refresh_staff_names_cache()
-
             await interaction.followup.send(embed=embed)
         else:
             await interaction.followup.send(f"Apps Script error (HTTP {status}):\n```{response_text[:500]}```")
@@ -2536,6 +2554,108 @@ async def slash_ping(interaction: discord.Interaction):
 async def slash_hello(interaction: discord.Interaction):
     await interaction.response.send_message('Goodbye')
 
+
+# -------------------------------------------------
+#  /staffblacklist
+# -------------------------------------------------
+@bot.tree.command(name="staffblacklist", description="[ADMIN] Add a user to the staff blacklist")
+@app_commands.describe(
+    discord_account="The Discord user to blacklist",
+    roblox_username="Their Roblox username",
+    reason="Reason for blacklisting",
+)
+@cooldown()
+async def staff_blacklist(
+    interaction: discord.Interaction,
+    discord_account: discord.Member,
+    roblox_username: str,
+    reason: str,
+):
+    await interaction.response.defer()
+
+    discord_id = str(discord_account.id)
+    date_str   = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        def _add_to_blacklist():
+            ws       = spreadsheet.worksheet(BLACKLISTED_STAFF_SHEET)
+            all_data = ws.get_all_values()
+            filled   = sum(
+                1 for row in all_data[BL_DATA_START - 1:]
+                if any(cell.strip() for cell in row[:5])
+            )
+            next_row = BL_DATA_START + filled
+            ws.update(f"B{next_row}:E{next_row}", [[discord_id, roblox_username, date_str, reason]])
+            return next_row
+
+        row_num = await safe_sheets_call(_add_to_blacklist)
+
+        embed = discord.Embed(
+            title="🚫 Staff Blacklisted",
+            color=discord.Color.red(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="Discord User",    value=discord_account.mention, inline=True)
+        embed.add_field(name="Discord ID",      value=discord_id,              inline=True)
+        embed.add_field(name="Roblox Username", value=roblox_username,         inline=True)
+        embed.add_field(name="Date",            value=date_str,                inline=True)
+        embed.add_field(name="Reason",          value=reason,                  inline=False)
+        embed.set_footer(text=f"Added to row {row_num} of {BLACKLISTED_STAFF_SHEET}")
+        await interaction.followup.send(embed=embed)
+
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send(f"❌ Sheet '{BLACKLISTED_STAFF_SHEET}' not found!")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Unexpected error: {e}")
+
+
+# -------------------------------------------------
+#  /unblackliststaff
+# -------------------------------------------------
+@bot.tree.command(name="unblackliststaff", description="[ADMIN] Remove a user from the staff blacklist")
+@app_commands.describe(discord_id="Select the blacklisted staff member")
+@app_commands.autocomplete(discord_id=blacklisted_staff_autocomplete)
+@cooldown()
+async def unblacklist_staff(interaction: discord.Interaction, discord_id: str):
+    await interaction.response.defer()
+
+    try:
+        def _remove_from_blacklist():
+            ws       = spreadsheet.worksheet(BLACKLISTED_STAFF_SHEET)
+            all_data = ws.get_all_values()
+            for i, row in enumerate(all_data[BL_DATA_START - 1:], start=BL_DATA_START):
+                if safe_get(row, BL_DISCORD_ID_COL) == discord_id:
+                    ws.delete_rows(i)
+                    return True, row
+            return False, None
+
+        found, removed_row = await safe_sheets_call(_remove_from_blacklist)
+
+        if found:
+            removed_roblox = safe_get(removed_row, BL_ROBLOX_COL) if removed_row else "N/A"
+            removed_date   = safe_get(removed_row, BL_DATE_COL)   if removed_row else "N/A"
+            removed_reason = safe_get(removed_row, BL_REASON_COL) if removed_row else "N/A"
+
+            embed = discord.Embed(
+                title="✅ Staff Unblacklisted",
+                color=discord.Color.green(),
+                timestamp=datetime.now(),
+            )
+            embed.add_field(name="Discord ID",              value=discord_id,      inline=True)
+            embed.add_field(name="Roblox Username",         value=removed_roblox,  inline=True)
+            embed.add_field(name="Original Blacklist Date", value=removed_date,    inline=True)
+            embed.add_field(name="Original Reason",         value=removed_reason,  inline=False)
+            embed.set_footer(text=f"Removed from {BLACKLISTED_STAFF_SHEET} by {interaction.user.display_name}")
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send(f"❌ Discord ID `{discord_id}` was not found in the blacklist.")
+
+    except gspread.WorksheetNotFound:
+        await interaction.followup.send(f"❌ Sheet '{BLACKLISTED_STAFF_SHEET}' not found!")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Unexpected error: {e}")
+
+
 # -------------------------------------------------
 #  /syncallstaff
 # -------------------------------------------------
@@ -2577,7 +2697,7 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
     success_rbx  = 0
     failed_rbx   = 0
     skipped      = 0
-    details      = []  # per-person summary lines
+    details      = []
 
     await interaction.followup.send(
         f"{'🔍 [DRY RUN] ' if dry_run else ''}⏳ Syncing **{total}** staff members... this may take a while.",
@@ -2597,7 +2717,6 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
 
         line_parts = [f"**{teaching_name}** ({sheet_role})"]
 
-        # --- Discord ---
         if discord_id_str and discord_id_str != "N/A":
             member = await get_discord_member_by_id(guild, discord_id_str)
             if member:
@@ -2636,7 +2755,6 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
             line_parts.append("➖ Discord (no ID)")
             skipped += 1
 
-        # --- Roblox ---
         if roblox_username and roblox_username != "N/A":
             if sheet_role in ROLE_NAME_MAP:
                 if not dry_run:
@@ -2657,23 +2775,20 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
             line_parts.append("➖ Roblox (no username)")
 
         details.append(" | ".join(line_parts))
-
-        # Small delay to avoid hitting rate limits
         await asyncio.sleep(0.5)
 
-    # --- Build summary embed ---
     mode_label = "DRY RUN PREVIEW" if dry_run else "Sync Complete"
     embed = discord.Embed(
         title=f"{'🔍 ' if dry_run else '✅ '}Staff Sync — {mode_label}",
         color=discord.Color.blue() if dry_run else discord.Color.green(),
         timestamp=datetime.now()
     )
-    embed.add_field(name="Total Staff",      value=total,        inline=True)
-    embed.add_field(name="Discord ✅",        value=success_disc, inline=True)
-    embed.add_field(name="Discord ⚠️",        value=failed_disc,  inline=True)
-    embed.add_field(name="Roblox ✅",         value=success_rbx,  inline=True)
-    embed.add_field(name="Roblox ⚠️",         value=failed_rbx,   inline=True)
-    embed.add_field(name="Skipped",          value=skipped,      inline=True)
+    embed.add_field(name="Total Staff", value=total,        inline=True)
+    embed.add_field(name="Discord ✅",  value=success_disc, inline=True)
+    embed.add_field(name="Discord ⚠️",  value=failed_disc,  inline=True)
+    embed.add_field(name="Roblox ✅",   value=success_rbx,  inline=True)
+    embed.add_field(name="Roblox ⚠️",   value=failed_rbx,   inline=True)
+    embed.add_field(name="Skipped",     value=skipped,      inline=True)
 
     if dry_run:
         embed.set_footer(text="Dry run — no changes were made. Run /syncallstaff dry_run:False to apply.")
@@ -2682,7 +2797,6 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # --- Send per-person detail in chunks (ephemeral followups) ---
     chunk = ""
     for line in details:
         if len(chunk) + len(line) + 1 > 1900:
@@ -2692,21 +2806,107 @@ async def sync_all_staff(interaction: discord.Interaction, dry_run: bool = False
     if chunk.strip():
         await interaction.followup.send(f"```\n{chunk.strip()}\n```", ephemeral=True)
 
+
+# -------------------------------------------------
+#  /syncstaff  — sync a single staff member
+# -------------------------------------------------
+@bot.tree.command(name="syncstaff", description="Sync a single staff member's Discord roles, nickname and Roblox rank")
+@app_commands.describe(staff_name="Select the staff member to sync")
+@app_commands.autocomplete(staff_name=staff_autocomplete)
+@cooldown()
+async def sync_staff(interaction: discord.Interaction, staff_name: str):
+    await interaction.response.defer(ephemeral=True)
+
+    if not spreadsheet:
+        await interaction.followup.send("❌ Google Sheets is not connected.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    if not guild:
+        await interaction.followup.send("❌ Must be run inside a server.", ephemeral=True)
+        return
+
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to read sheet: {e}", ephemeral=True)
+        return
+
+    target_row = None
+    for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+        if (
+            len(row) > CURRENT_STAFF_NAME_COL
+            and row[CURRENT_STAFF_NAME_COL].strip().lower() == staff_name.lower()
+        ):
+            target_row = row
+            break
+
+    if target_row is None:
+        await interaction.followup.send(
+            f"❌ Staff member **{staff_name}** not found in {CURRENT_STAFF_SHEET}.",
+            ephemeral=True
+        )
+        return
+
+    teaching_name   = safe_get(target_row, CURRENT_STAFF_NAME_COL)
+    sheet_role      = safe_get(target_row, 1)
+    roblox_username = safe_get(target_row, 2)
+    discord_id_str  = safe_get(target_row, 7)
+
+    embed = discord.Embed(
+        title=f"🔄 Syncing: {teaching_name}",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="Role",            value=sheet_role,      inline=True)
+    embed.add_field(name="Roblox Username", value=roblox_username, inline=True)
+    embed.add_field(name="Discord ID",      value=discord_id_str,  inline=True)
+
+    if discord_id_str and discord_id_str != "N/A":
+        member = await get_discord_member_by_id(guild, discord_id_str)
+        if member:
+            if sheet_role and sheet_role != "N/A":
+                await apply_discord_roles_and_nick(
+                    guild, member, sheet_role, teaching_name, embed=embed
+                )
+            else:
+                embed.add_field(name="Discord", value="⚠️ No role in sheet — skipped", inline=False)
+        else:
+            embed.add_field(name="Discord", value="⚠️ Member not found in this server", inline=False)
+    else:
+        embed.add_field(name="Discord", value="➖ No Discord ID on file", inline=False)
+
+    if roblox_username and roblox_username != "N/A":
+        if sheet_role in ROLE_NAME_MAP:
+            success, result = await roblox_set_rank_by_sheet_role(roblox_username, sheet_role)
+            if success:
+                embed.add_field(name="Roblox", value=f"✅ Ranked to **{result}**", inline=False)
+            else:
+                embed.add_field(name="Roblox", value=f"⚠️ {result}", inline=False)
+        else:
+            embed.add_field(name="Roblox", value="➖ Role not in Roblox rank map", inline=False)
+    else:
+        embed.add_field(name="Roblox", value="➖ No Roblox username on file", inline=False)
+
+    embed.set_footer(text=f"Synced by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 # -------------------------------------------------
 #  /viewremovedstaff
 # -------------------------------------------------
-
 async def removed_staff_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
-    """Autocomplete that lists names from the Remove Staff Log sheet (col B, rows 5+)."""
     try:
         all_data = await safe_sheets_call(
-            lambda: spreadsheet.worksheet("Remove Staff Log").get_all_values()
+            lambda: spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET).get_all_values()
         )
         names = []
-        for row in all_data[4:]:  # data starts at row 5 (index 4)
-            name = safe_get(row, 1)  # column B = index 1
+        for row in all_data[RSL_DATA_START - 1:]:
+            name = safe_get(row, RSL_NAME_COL)
             if name and name != "N/A" and name not in names:
                 names.append(name)
 
@@ -2726,17 +2926,17 @@ async def view_removed_staff(interaction: discord.Interaction, staff_name: str):
 
     try:
         all_data = await safe_sheets_call(
-            lambda: spreadsheet.worksheet("Remove Staff Log").get_all_values()
+            lambda: spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET).get_all_values()
         )
 
-        # Collect ALL records for this person (in case they were removed more than once)
         records = []
-        for row in all_data[4:]:  # rows 5+ are data
-            name = safe_get(row, 1)  # col B — Teaching Name
+        for row in all_data[RSL_DATA_START - 1:]:
+            name = safe_get(row, RSL_NAME_COL)
             if name.strip().lower() == staff_name.strip().lower():
-                date   = safe_get(row, 2)  # col C — Date of Removal
-                reason = safe_get(row, 3)  # col D — Reason
-                records.append((name, date, reason))
+                date       = safe_get(row, RSL_DATE_COL)
+                discord_id = safe_get(row, RSL_DISCORD_ID_COL)
+                reason     = safe_get(row, RSL_REASON_COL)
+                records.append((name, date, discord_id, reason))
 
         if not records:
             await interaction.followup.send(
@@ -2751,22 +2951,25 @@ async def view_removed_staff(interaction: discord.Interaction, staff_name: str):
             timestamp=datetime.now(),
         )
 
-        for i, (name, date, reason) in enumerate(records, start=1):
+        for i, (name, date, discord_id, reason) in enumerate(records, start=1):
             label = f"Entry {i}" if len(records) > 1 else "Details"
             embed.add_field(name=f"{label} — Teaching Name",   value=name,   inline=True)
-            embed.add_field(name=f"{label} — Date of Removal", value=date,   inline=False)
-            embed.add_field(name=f"{label} — Reason",          value=reason, inline=False)
+            embed.add_field(name=f"{label} — Date of Removal", value=date,   inline=True)
+            embed.add_field(
+                name=f"{label} — Discord ID",
+                value=f"<@{discord_id}>" if discord_id != "N/A" else "N/A",
+                inline=True
+            )
+            embed.add_field(name=f"{label} — Reason", value=reason, inline=False)
 
             if i < len(records):
-                embed.add_field(name="\u200b", value="─" * 30, inline=False)  # divider
+                embed.add_field(name="\u200b", value="─" * 30, inline=False)
 
         embed.set_footer(text=f"Remove Staff Log · {len(records)} record(s) found")
         await interaction.followup.send(embed=embed, ephemeral=False)
 
     except gspread.WorksheetNotFound:
-        await interaction.followup.send(
-            "❌ 'Remove Staff Log' sheet not found.", ephemeral=True
-        )
+        await interaction.followup.send(f"❌ '{REMOVE_STAFF_LOG_SHEET}' sheet not found.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ Unexpected error: {e}", ephemeral=True)
 
@@ -2849,35 +3052,33 @@ async def diagnose_roblox(interaction: discord.Interaction):
     for chunk in chunks[1:]:
         await interaction.followup.send(f"```\n{chunk}\n```", ephemeral=True)
 
+
 # -------------------------------------------------
 #  STUDENT NAME REQUEST SYSTEM
 # -------------------------------------------------
 
-# The channel where Senior Leadership will see the buttons
 STUDENT_NAME_LOG_ID = 1489698033573826601
 
 class StudentNameRequestView(discord.ui.View):
     def __init__(self, requester_id: int, requested_name: str):
         super().__init__(timeout=None)
-        self.requester_id = requester_id
+        self.requester_id   = requester_id
         self.requested_name = requested_name
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="stud_name_approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        
-        guild = interaction.guild
-        member = None
+
+        guild     = interaction.guild
+        member    = None
         error_log = ""
 
-        # FORCE FETCH: This solves 90% of "nothing happening" issues
         try:
             member = await guild.fetch_member(self.requester_id)
         except Exception as e:
             error_log = f"Could not find member: {e}"
 
         if member:
-            # 1. TRY NICKNAME CHANGE
             try:
                 await member.edit(nick=self.requested_name)
             except discord.Forbidden:
@@ -2885,7 +3086,6 @@ class StudentNameRequestView(discord.ui.View):
             except Exception as e:
                 error_log += f" | Nick Error: {e}"
 
-            # 2. TRY DM
             try:
                 dm_embed = discord.Embed(
                     title="Name Request Approved",
@@ -2896,23 +3096,22 @@ class StudentNameRequestView(discord.ui.View):
             except Exception as e:
                 error_log += f" | DM Error: {e} (User likely has DMs off)"
 
-        # Update the staff message
         for child in self.children:
             child.disabled = True
-        
+
         new_embed = interaction.message.embeds[0]
         new_embed.title = "✅ Approved & Processed"
         if error_log:
             new_embed.add_field(name="System Logs", value=f"```{error_log}```", inline=False)
-        
+
         await interaction.message.edit(embed=new_embed, view=self)
 
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="stud_name_deny")
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        
-        guild = interaction.guild
-        member = None
+
+        guild     = interaction.guild
+        member    = None
         dm_status = "✅ Sent"
 
         try:
@@ -2932,13 +3131,12 @@ class StudentNameRequestView(discord.ui.View):
         new_embed = interaction.message.embeds[0]
         new_embed.title = "❌ Request Denied"
         new_embed.add_field(name="DM Status", value=dm_status)
-        
+
         await interaction.message.edit(embed=new_embed, view=self)
 
 @bot.tree.command(name="requestdisplayname", description="Request a change to your student display name")
 @app_commands.describe(new_name="The name you would like to be displayed as")
 async def request_display_name(interaction: discord.Interaction, new_name: str):
-    # Ensure name isn't too long for Discord
     if len(new_name) > 32:
         return await interaction.response.send_message("❌ Names must be under 32 characters.", ephemeral=True)
 
@@ -2946,16 +3144,15 @@ async def request_display_name(interaction: discord.Interaction, new_name: str):
     if not log_channel:
         return await interaction.response.send_message("❌ Log channel not found.", ephemeral=True)
 
-    # Embed for the Staff Channel
     request_embed = discord.Embed(
         title="🎓 Student Name Change Request",
-        description=f"A student has requested a name change.",
+        description="A student has requested a name change.",
         color=discord.Color.blue(),
         timestamp=datetime.now()
     )
-    request_embed.add_field(name="Student", value=interaction.user.mention, inline=True)
+    request_embed.add_field(name="Student",          value=interaction.user.mention,      inline=True)
     request_embed.add_field(name="Current Nickname", value=interaction.user.display_name, inline=True)
-    request_embed.add_field(name="Requested Name", value=f"`{new_name}`", inline=False)
+    request_embed.add_field(name="Requested Name",   value=f"`{new_name}`",              inline=False)
     request_embed.set_footer(text=f"User ID: {interaction.user.id}")
 
     view = StudentNameRequestView(
@@ -2966,15 +3163,14 @@ async def request_display_name(interaction: discord.Interaction, new_name: str):
     await log_channel.send(embed=request_embed, view=view)
     await interaction.response.send_message("✅ Your request has been sent to the Senior Leadership Team.", ephemeral=True)
 
+
 # -------------------------------------------------
 #  /customrolerequest
 # -------------------------------------------------
 
-# --- CONFIGURATION ---
 ROLE_REQUEST_CHANNEL_ID = 1489704193467088997
 
 def is_valid_hex(hex_code: str):
-    """Checks if a string is a valid 6-digit hex code."""
     if not hex_code:
         return False
     return bool(re.search(r'^#(?:[0-9a-fA-F]{3}){1,2}$|^[0-9a-fA-F]{6}$', hex_code))
@@ -2983,19 +3179,18 @@ class CustomRoleView(discord.ui.View):
     def __init__(self, requester_id: int, role_name: str, hex_color: str):
         super().__init__(timeout=None)
         self.requester_id = requester_id
-        self.role_name = role_name
-        self.hex_color = hex_color
+        self.role_name    = role_name
+        self.hex_color    = hex_color
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="role_approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        guild = interaction.guild
+        guild  = interaction.guild
         member = await guild.fetch_member(self.requester_id)
-        
+
         if not member:
             return await interaction.followup.send("Member not found in server.", ephemeral=True)
 
-        # Handle Color
         clean_hex = self.hex_color.replace("#", "") if self.hex_color else ""
         if is_valid_hex(clean_hex):
             color_value = discord.Color(int(clean_hex, 16))
@@ -3003,17 +3198,14 @@ class CustomRoleView(discord.ui.View):
             color_value = discord.Color.default()
 
         try:
-            # 1. Create the Role
             new_role = await guild.create_role(
                 name=self.role_name,
                 color=color_value,
                 reason=f"Custom role approved for {member.display_name} by {interaction.user.display_name}"
             )
 
-            # 2. Give Role to Member
             await member.add_roles(new_role)
 
-            # 3. Send Success DM
             dm_embed = discord.Embed(
                 title="Custom Role Approved!",
                 description=(
@@ -3024,8 +3216,8 @@ class CustomRoleView(discord.ui.View):
             )
             await member.send(embed=dm_embed)
 
-            # Update Log
-            for child in self.children: child.disabled = True
+            for child in self.children:
+                child.disabled = True
             log_embed = interaction.message.embeds[0]
             log_embed.title = "✅ Role Request Approved & Created"
             log_embed.color = discord.Color.green()
@@ -3039,7 +3231,7 @@ class CustomRoleView(discord.ui.View):
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, emoji="❌", custom_id="role_deny")
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        guild = interaction.guild
+        guild  = interaction.guild
         member = await guild.fetch_member(self.requester_id)
 
         if member:
@@ -3053,9 +3245,11 @@ class CustomRoleView(discord.ui.View):
                     color=discord.Color.red()
                 )
                 await member.send(embed=dm_embed)
-            except: pass
+            except Exception:
+                pass
 
-        for child in self.children: child.disabled = True
+        for child in self.children:
+            child.disabled = True
         log_embed = interaction.message.embeds[0]
         log_embed.title = "❌ Role Request Denied"
         log_embed.color = discord.Color.red()
@@ -3068,9 +3262,8 @@ async def customrolerequest(interaction: discord.Interaction, name: str, color: 
     if not log_channel:
         return await interaction.response.send_message("Log channel not found.", ephemeral=True)
 
-    # Preview color logic for the log embed
     preview_color = discord.Color.blue()
-    clean_hex = color.replace("#", "") if color else ""
+    clean_hex     = color.replace("#", "") if color else ""
     if is_valid_hex(clean_hex):
         preview_color = discord.Color(int(clean_hex, 16))
 
@@ -3079,21 +3272,25 @@ async def customrolerequest(interaction: discord.Interaction, name: str, color: 
         color=preview_color,
         timestamp=interaction.created_at
     )
-    request_embed.add_field(name="User", value=interaction.user.mention, inline=True)
-    request_embed.add_field(name="Requested Name", value=name, inline=True)
+    request_embed.add_field(name="User",            value=interaction.user.mention,   inline=True)
+    request_embed.add_field(name="Requested Name",  value=name,                       inline=True)
     request_embed.add_field(name="Requested Color", value=f"`{color or 'Default'}`", inline=True)
     request_embed.set_footer(text=f"User ID: {interaction.user.id}")
 
     view = CustomRoleView(requester_id=interaction.user.id, role_name=name, hex_color=color)
-    
+
     await log_channel.send(embed=request_embed, view=view)
     await interaction.response.send_message("✅ Your role request has been submitted!", ephemeral=True)
+
 
 # -------------------------------------------------
 #  /apply
 # -------------------------------------------------
 
 APPLICATION_LOG_CHANNEL_ID = 1489748153480773722
+
+# DM sent when an application cannot proceed (blacklisted or recent staff)
+APPLICATION_BLOCKED_DM = "Oops! You can't apply for that position right now. Try again later!"
 
 WELCOME_DM = (
     "## ❗ | Congratulations on Your Appointment at Winstree Academy\n"
@@ -3150,6 +3347,58 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+
+        # ── Eligibility checks ─────────────────────────────────────────────
+        discord_id = str(interaction.user.id)
+        can_apply, block_reason = await check_application_eligibility(discord_id)
+
+        if not can_apply:
+            # Send the generic DM so the user knows without revealing why
+            try:
+                await interaction.user.send(APPLICATION_BLOCKED_DM)
+            except Exception:
+                pass  # DMs disabled — nothing we can do
+
+            await interaction.followup.send(
+                "❌ You are not currently eligible to apply. Please check your DMs.",
+                ephemeral=True,
+            )
+
+            print(f"[Apply] Blocked {interaction.user} (ID: {discord_id}) — reason: {block_reason}")
+
+            # ── Notify the staff alert channel ─────────────────────────────
+            blocked_channel = interaction.client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
+            if blocked_channel:
+                if block_reason == "blacklisted":
+                    reason_label = "🚫 User is on the staff blacklist"
+                    embed_color  = discord.Color.red()
+                elif block_reason == "recent_staff":
+                    reason_label = "⏳ User was removed from staff within the last 2 weeks"
+                    embed_color  = discord.Color.orange()
+                else:
+                    reason_label = f"Unknown (`{block_reason}`)"
+                    embed_color  = discord.Color.greyple()
+
+                blocked_embed = discord.Embed(
+                    title="⛔ Blocked Application Attempt",
+                    description="A user attempted to apply but was automatically blocked.",
+                    color=embed_color,
+                    timestamp=datetime.now(),
+                )
+                blocked_embed.add_field(name="User",            value=interaction.user.mention,   inline=True)
+                blocked_embed.add_field(name="Discord ID",      value=discord_id,                 inline=True)
+                blocked_embed.add_field(name="Roblox Username", value=self.roblox_username.value, inline=True)
+                blocked_embed.add_field(name="Teaching Name",   value=self.teaching_name.value,   inline=True)
+                blocked_embed.add_field(name="Reason Blocked",  value=reason_label,               inline=False)
+                blocked_embed.set_footer(text=f"User ID: {discord_id}")
+
+                try:
+                    await blocked_channel.send(embed=blocked_embed)
+                except Exception as e:
+                    print(f"[Apply] Failed to send blocked notification: {e}")
+            # ───────────────────────────────────────────────────────────────
+            return
+        # ───────────────────────────────────────────────────────────────────
 
         log_channel = interaction.client.get_channel(APPLICATION_LOG_CHANNEL_ID)
         if not log_channel:
@@ -3278,7 +3527,6 @@ class ApplicationReviewView(discord.ui.View):
         except Exception:
             pass
 
-        # --- Determine area and role from age range ---
         if self.age_range in ("9-12", "13-15", "16-17"):
             area = "Academy"
         else:
@@ -3286,7 +3534,6 @@ class ApplicationReviewView(discord.ui.View):
 
         role = "School Staff"
 
-        # --- 1. Add to Google Sheet via Apps Script ---
         sheet_status = ""
         params = {
             "action":        "hire",
@@ -3305,7 +3552,6 @@ class ApplicationReviewView(discord.ui.View):
         except Exception as e:
             sheet_status = f"⚠️ Sheet exception: {e}"
 
-        # --- 2. Roblox rank ---
         roblox_status = ""
         try:
             success, result = await roblox_set_rank_by_sheet_role(self.roblox_username, role)
@@ -3316,7 +3562,6 @@ class ApplicationReviewView(discord.ui.View):
         except Exception as e:
             roblox_status = f"⚠️ Roblox exception: {e}"
 
-        # --- 3. Discord roles + nickname ---
         discord_status = ""
         if guild and member:
             try:
@@ -3332,7 +3577,7 @@ class ApplicationReviewView(discord.ui.View):
                     await member.add_roles(*desired_role_objects, reason=f"Application accepted — {role}")
                 new_nick = get_nickname_for_sheet_role(self.teaching_name, role)[:32]
                 await member.edit(nick=new_nick, reason="Application accepted")
-                role_names = ", ".join(r.name for r in desired_role_objects) or "None"
+                role_names     = ", ".join(r.name for r in desired_role_objects) or "None"
                 discord_status = f"✅ Roles: {role_names}\n✅ Nickname: `{new_nick}`"
             except discord.Forbidden:
                 discord_status = "⚠️ Missing permissions to manage roles or nickname"
@@ -3341,7 +3586,6 @@ class ApplicationReviewView(discord.ui.View):
         else:
             discord_status = "⚠️ Member not found in server"
 
-        # --- 4. Send welcome DM ---
         dm_status = ""
         if member:
             try:
@@ -3354,7 +3598,6 @@ class ApplicationReviewView(discord.ui.View):
         else:
             dm_status = "⚠️ Member not found in server"
 
-        # --- Disable buttons and update embed ---
         for child in self.children:
             child.disabled = True
 
@@ -3382,7 +3625,6 @@ class ApplicationReviewView(discord.ui.View):
         except Exception:
             pass
 
-        # --- Send rejection DM ---
         dm_status = ""
         if member:
             try:
@@ -3395,7 +3637,6 @@ class ApplicationReviewView(discord.ui.View):
         else:
             dm_status = "⚠️ Member not found in server"
 
-        # --- Disable buttons and update embed ---
         for child in self.children:
             child.disabled = True
 
