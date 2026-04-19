@@ -1111,7 +1111,7 @@ async def on_ready():
     if not timetable_reminder_task.is_running():
         timetable_reminder_task.start()
     if not weekly_tiktok_task.is_running():
-    weekly_tiktok_task.start()
+        weekly_tiktok_task.start()
 
 
 # -------------------------------------------------
@@ -2348,7 +2348,7 @@ async def weekly_tiktok_task():
     utc_offset = 1 if 4 <= month <= 10 else 0
     now_uk = now_utc + dt.timedelta(hours=utc_offset)
 
-    if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:23":
+    if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:30":
         return
 
     minute_key = now_uk.strftime("%Y-%m-%d-%H-%M")
