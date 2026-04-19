@@ -283,12 +283,11 @@ ATTEND_CHECK_END   = 9
 #  Col D (index 3) = Discord ID
 #  Col E (index 4) = Reason for Removal
 # ------------------------------------------------------------------
-RSL_NAME_COL       = 1   # Col B
-RSL_DATE_COL       = 2   # Col C
-RSL_DISCORD_ID_COL = 3   # Col D
-RSL_REASON_COL     = 4   # Col E
+RSL_NAME_COL       = 1   # Col B - Teaching Name
+RSL_DATE_COL       = 2   # Col C - Date of Removal
+RSL_REASON_COL     = 3   # Col D - Reason
+RSL_DISCORD_ID_COL = 4   # Col E - Discord ID
 RSL_DATA_START     = 5   # First data row
-
 # ------------------------------------------------------------------
 #  Blacklisted Staff column layout
 #  Col B (index 1) = Discord ID
@@ -3406,6 +3405,49 @@ REJECTION_DM = (
 )
 
 
+async def _send_blocked_notification(
+    client: discord.Client,
+    user: discord.User | discord.Member,
+    discord_id: str,
+    block_reason: str,
+    roblox_username: str = "N/A",
+    teaching_name: str = "N/A",
+    stage: str = "/apply command",
+) -> None:
+    """Shared helper — posts a blocked-application embed to BLOCKED_APP_LOG_CHANNEL_ID."""
+    blocked_channel = client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
+    if not blocked_channel:
+        return
+
+    if block_reason == "blacklisted":
+        reason_label = "🚫 User is on the staff blacklist"
+        embed_color  = discord.Color.red()
+    elif block_reason == "recent_staff":
+        reason_label = "⏳ User was removed from staff within the last 2 weeks"
+        embed_color  = discord.Color.orange()
+    else:
+        reason_label = f"Unknown (`{block_reason}`)"
+        embed_color  = discord.Color.greyple()
+
+    blocked_embed = discord.Embed(
+        title="⛔ Blocked Application Attempt",
+        description=f"A user was automatically blocked at the **{stage}** stage.",
+        color=embed_color,
+        timestamp=datetime.now(),
+    )
+    blocked_embed.add_field(name="User",            value=user.mention,     inline=True)
+    blocked_embed.add_field(name="Discord ID",      value=discord_id,       inline=True)
+    blocked_embed.add_field(name="Roblox Username", value=roblox_username,  inline=True)
+    blocked_embed.add_field(name="Teaching Name",   value=teaching_name,    inline=True)
+    blocked_embed.add_field(name="Reason Blocked",  value=reason_label,     inline=False)
+    blocked_embed.set_footer(text=f"User ID: {discord_id}")
+
+    try:
+        await blocked_channel.send(embed=blocked_embed)
+    except Exception as e:
+        print(f"[Apply] Failed to send blocked notification: {e}")
+
+
 class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staff Application"):
 
     roblox_username = discord.ui.TextInput(
@@ -3439,6 +3481,8 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
         await interaction.response.defer(ephemeral=True)
 
         discord_id = str(interaction.user.id)
+
+        # Safety-net check — catches anyone who somehow bypassed the /apply command check
         can_apply, block_reason = await check_application_eligibility(discord_id)
 
         if not can_apply:
@@ -3448,41 +3492,21 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
                 pass
 
             await interaction.followup.send(
-                "❌ You are not currently eligible to apply. Please check your DMs.",
+                "Oops! You can't apply for that position right now. Try again later!",
                 ephemeral=True,
             )
 
-            print(f"[Apply] Blocked {interaction.user} (ID: {discord_id}) — reason: {block_reason}")
+            print(f"[Apply] Blocked {interaction.user} (ID: {discord_id}) at modal stage — reason: {block_reason}")
 
-            blocked_channel = interaction.client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
-            if blocked_channel:
-                if block_reason == "blacklisted":
-                    reason_label = "🚫 User is on the staff blacklist"
-                    embed_color  = discord.Color.red()
-                elif block_reason == "recent_staff":
-                    reason_label = "⏳ User was removed from staff within the last 2 weeks"
-                    embed_color  = discord.Color.orange()
-                else:
-                    reason_label = f"Unknown (`{block_reason}`)"
-                    embed_color  = discord.Color.greyple()
-
-                blocked_embed = discord.Embed(
-                    title="⛔ Blocked Application Attempt",
-                    description="A user attempted to apply but was automatically blocked.",
-                    color=embed_color,
-                    timestamp=datetime.now(),
-                )
-                blocked_embed.add_field(name="User",            value=interaction.user.mention,   inline=True)
-                blocked_embed.add_field(name="Discord ID",      value=discord_id,                 inline=True)
-                blocked_embed.add_field(name="Roblox Username", value=self.roblox_username.value, inline=True)
-                blocked_embed.add_field(name="Teaching Name",   value=self.teaching_name.value,   inline=True)
-                blocked_embed.add_field(name="Reason Blocked",  value=reason_label,               inline=False)
-                blocked_embed.set_footer(text=f"User ID: {discord_id}")
-
-                try:
-                    await blocked_channel.send(embed=blocked_embed)
-                except Exception as e:
-                    print(f"[Apply] Failed to send blocked notification: {e}")
+            await _send_blocked_notification(
+                client=interaction.client,
+                user=interaction.user,
+                discord_id=discord_id,
+                block_reason=block_reason,
+                roblox_username=self.roblox_username.value,
+                teaching_name=self.teaching_name.value,
+                stage="modal submission",
+            )
             return
 
         log_channel = interaction.client.get_channel(APPLICATION_LOG_CHANNEL_ID)
@@ -3747,12 +3771,31 @@ class ApplicationReviewView(discord.ui.View):
 @bot.tree.command(name="apply", description="Apply for a staff position at Winstree Academy")
 @cooldown()
 async def apply(interaction: discord.Interaction):
+    discord_id = str(interaction.user.id)
+    can_apply, block_reason = await check_application_eligibility(discord_id)
+
+    if not can_apply:
+        print(f"[Apply] Blocked {interaction.user} (ID: {discord_id}) at /apply stage — reason: {block_reason}")
+
+        await _send_blocked_notification(
+            client=interaction.client,
+            user=interaction.user,
+            discord_id=discord_id,
+            block_reason=block_reason,
+            stage="/apply command",
+        )
+
+        return await interaction.response.send_message(
+            "Oops! You can't apply for that position right now. Try again later!",
+            ephemeral=True,
+        )
+
     await interaction.response.send_message(
         "## 📋 Winstree Academy — Staff Application\n"
         "Please select your age range below to begin your application.\n\n"
         "_ _",
         view=AgeRangeView(),
-        ephemeral=True
+        ephemeral=True,
     )
 
 
