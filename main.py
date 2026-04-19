@@ -220,6 +220,8 @@ TIMETABLE_POST_TIME               = "21:15"
 YEAR_LEADER_ROLE_ID               = 0
 TIMETABLE_ADMIN_ROLE_ID           = 1438202314476228678
 
+TIKTOK_ANNOUNCEMENT_CHANNEL_ID = 1491161732880666818
+
 ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
 ROBLOX_GROUP_ID = 779411059
 
@@ -1110,6 +1112,8 @@ async def on_ready():
         timetable_post_task.start()
     if not timetable_reminder_task.is_running():
         timetable_reminder_task.start()
+    if not weekly_tiktok_task.is_running():
+    weekly_tiktok_task.start()
 
 
 # -------------------------------------------------
@@ -2332,6 +2336,62 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
         await interaction.followup.send(f"Sheet '{CURRENT_STAFF_SHEET}' not found!")
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
+
+# -------------------------------------------------
+#  WEEKLY TIKTOK REMINDER TASK
+# -------------------------------------------------
+@tasks.loop(minutes=1)
+async def weekly_tiktok_task():
+    import datetime as dt
+
+    # UK time offset: UTC+1 (BST) Apr–Oct, UTC+0 (GMT) otherwise
+    now_utc = dt.datetime.utcnow()
+    month = now_utc.month
+    utc_offset = 1 if 4 <= month <= 10 else 0
+    now_uk = now_utc + dt.timedelta(hours=utc_offset)
+
+    # Only fire on Sundays (weekday() == 6) at 13:00
+    if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:00":
+        return
+
+    minute_key = now_uk.strftime("%Y-%m-%d-%H-%M")
+    if not hasattr(weekly_tiktok_task, 'sent_keys'):
+        weekly_tiktok_task.sent_keys = set()
+    if minute_key in weekly_tiktok_task.sent_keys:
+        return
+    weekly_tiktok_task.sent_keys.add(minute_key)
+
+    # Prune old keys
+    cutoff = (now_uk - dt.timedelta(days=2)).strftime("%Y-%m-%d-%H-%M")
+    weekly_tiktok_task.sent_keys = {k for k in weekly_tiktok_task.sent_keys if k > cutoff}
+
+    ch = bot.get_channel(TIKTOK_ANNOUNCEMENT_CHANNEL_ID)
+    if not ch:
+        print("[TikTok] Channel not found!")
+        return
+
+    message = (
+        "## <:Winstree_Logo:1484894179552133312> | Winstree x TikTok\n"
+        "Hi everyone,\n"
+        "We're looking to grow Winstree Academy and bring in more players, and one of the best ways to do that right now is through TikTok.\n\n"
+        "We'd like to encourage all staff to start getting involved in making short TikTok videos that show off the game. This can be anything from gameplay clips and roleplay moments to funny scenes, trends, or just general content that represents the academy well.\n\n"
+        "The main goal is for each staff member to appear in at least one TikTok per week. You don't have to do this alone either. Teaming up with other staff is completely fine and honestly probably makes it easier and more fun.\n\n"
+        "Just keep the content appropriate and in line with the community. Other than that, feel free to be creative and try different ideas.\n\n"
+        "This is a simple way for us to get more eyes on the game and grow the community, so any effort here really helps.\n\n"
+        "If you're unsure where to start or have ideas, feel free to reach out to the Marketing Team!\n"
+        "<@&1484863012933210143>"
+    )
+
+    try:
+        await ch.send(message)
+        print(f"[TikTok] Weekly reminder sent at {now_uk.strftime('%Y-%m-%d %H:%M')} UK time")
+    except Exception as e:
+        print(f"[TikTok] Failed to send: {e}")
+
+@weekly_tiktok_task.before_loop
+async def before_weekly_tiktok():
+    await bot.wait_until_ready()
+    print("Weekly TikTok task started")
 
 
 # -------------------------------------------------
