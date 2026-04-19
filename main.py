@@ -3542,7 +3542,7 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
             reason=self.reason.value,
         )
 
-        await log_channel.send(content="<@&1485433594603241686>", embed=embed, view=view)
+        await log_channel.send(content="@here", embed=embed, view=view)
         await interaction.followup.send(
             "✅ Your application has been submitted! You will receive a DM once it has been reviewed by the Senior Leadership Team.",
             ephemeral=True
