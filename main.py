@@ -2125,6 +2125,30 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             embed.add_field(name="Reason",         value=reason,       inline=False)
             embed.set_footer(text="Staff record has been updated")
 
+            # Write the Discord ID to Column E of the Remove Staff Log
+            if target_discord_id and target_discord_id != "N/A":
+                try:
+                    def _write_discord_id_to_rsl():
+                        ws       = spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET)
+                        all_data = ws.get_all_values()
+                        # Search bottom-up for the most recent matching entry
+                        for i in range(len(all_data) - 1, RSL_DATA_START - 2, -1):
+                            if safe_get(all_data[i], RSL_NAME_COL).lower() == staff_name.lower():
+                                ws.update_cell(i + 1, 5, target_discord_id)  # Col E = 5 (1-indexed)
+                                return True
+                        return False
+
+                    wrote = await safe_sheets_call(_write_discord_id_to_rsl)
+                    if wrote:
+                        embed.add_field(name="RSL Discord ID", value=f"✅ Written to Column E: `{target_discord_id}`", inline=False)
+                    else:
+                        embed.add_field(name="RSL Discord ID", value="⚠️ Could not find matching row in Remove Staff Log", inline=False)
+                except Exception as e:
+                    print(f"[removestaff] Discord ID RSL write error: {e}")
+                    embed.add_field(name="RSL Discord ID", value=f"⚠️ Write error: {e}", inline=False)
+            else:
+                embed.add_field(name="RSL Discord ID", value="➖ No Discord ID on file — skipped", inline=False)
+
             if roblox_username:
                 success, err = await roblox_demote_to_rank_1(roblox_username)
                 if success:
