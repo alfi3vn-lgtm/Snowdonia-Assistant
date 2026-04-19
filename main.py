@@ -2348,7 +2348,7 @@ async def weekly_tiktok_task():
     utc_offset = 1 if 4 <= month <= 10 else 0
     now_uk = now_utc + dt.timedelta(hours=utc_offset)
 
-    if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:00":
+    if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:23":
         return
 
     minute_key = now_uk.strftime("%Y-%m-%d-%H-%M")
@@ -2387,7 +2387,6 @@ async def weekly_tiktok_task():
 @weekly_tiktok_task.before_loop
 async def before_weekly_tiktok():
     await bot.wait_until_ready()
-    weekly_tiktok_task.start() if not weekly_tiktok_task.is_running() else None
     print("Weekly TikTok task started")
 
 
