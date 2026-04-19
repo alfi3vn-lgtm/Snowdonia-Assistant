@@ -2003,7 +2003,6 @@ async def training_level_autocomplete(interaction: discord.Interaction, current:
         choices = [c for c in choices if current.lower() in c.name.lower()] or choices
     return choices
 
-
 # -------------------------------------------------
 #  HIRE HELPER  (shared by /hire and override button)
 # -------------------------------------------------
@@ -2015,7 +2014,6 @@ async def _execute_hire(
     area: str,
     role: str,
 ) -> None:
-    """Runs the full hire flow and sends/edits the result embed."""
     discord_user_id = str(discord_account.id)
 
     params = {
@@ -2128,29 +2126,28 @@ class HireOverrideView(discord.ui.View):
             discord.Color.orange(),
         )
 
-        override_embed = discord.Embed(
+        override_note = discord.Embed(
             title="⚠️ Eligibility Override Used",
             description=(
-                f"{interaction.user.mention} overrode the eligibility block for "
-                f"{self.discord_account.mention} and proceeded with hiring."
+                f"{interaction.user.mention} overrode the eligibility block and proceeded with hiring "
+                f"{self.discord_account.mention}."
             ),
             color=discord.Color.orange(),
             timestamp=datetime.now(),
         )
-        override_embed.add_field(name="Teaching Name",   value=self.teaching_name,           inline=True)
-        override_embed.add_field(name="Roblox Username", value=self.roblox_username,         inline=True)
-        override_embed.add_field(name="Area",            value=self.area,                    inline=True)
-        override_embed.add_field(name="Role",            value=self.role,                    inline=True)
-        override_embed.add_field(name="Block Reason",    value=self.block_reason,            inline=False)
-        override_embed.add_field(name="Overridden By",   value=interaction.user.mention,     inline=False)
-        override_embed.set_footer(text=f"Discord ID: {self.discord_account.id}")
+        override_note.add_field(name="Originally Attempted By", value=self.hiring_staff.mention, inline=True)
+        override_note.add_field(name="Overridden By",           value=interaction.user.mention,  inline=True)
+        override_note.add_field(name="Teaching Name",           value=self.teaching_name,        inline=True)
+        override_note.add_field(name="Roblox Username",         value=self.roblox_username,      inline=True)
+        override_note.add_field(name="Area",                    value=self.area,                 inline=True)
+        override_note.add_field(name="Role",                    value=self.role,                 inline=True)
+        override_note.add_field(name="Block Reason",            value=self.block_reason,         inline=False)
+        override_note.set_footer(text=f"Target Discord ID: {self.discord_account.id}")
 
-        blocked_channel = interaction.client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
-        if blocked_channel:
-            try:
-                await blocked_channel.send(embed=override_embed)
-            except Exception as e:
-                print(f"[Hire] Failed to send override log: {e}")
+        try:
+            await interaction.message.channel.send(embed=override_note)
+        except Exception as e:
+            print(f"[Hire] Failed to send override log: {e}")
 
         await _execute_hire(
             interaction,
@@ -2170,7 +2167,7 @@ class HireOverrideView(discord.ui.View):
             discord.Color.red(),
         )
         await interaction.followup.send(
-            f"✅ Hire cancelled. {self.discord_account.mention} was **not** added to the staff team.",
+            f"Hire cancelled. {self.discord_account.mention} was **not** added to the staff team.",
             ephemeral=True,
         )
 
@@ -2204,11 +2201,10 @@ async def hire(
     area: str,
     role: str,
 ):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
 
     discord_user_id = str(discord_account.id)
 
-    # --- Eligibility check ---
     can_hire, block_reason = await check_application_eligibility(discord_user_id)
 
     if not can_hire:
@@ -2222,23 +2218,32 @@ async def hire(
             reason_label = f"Unknown (`{block_reason}`)"
             embed_color  = discord.Color.greyple()
 
+        # Quiet message to the person who ran the command
+        await interaction.followup.send(
+            "Whoops! Looks like you can't hire them right now. Try again later!",
+            ephemeral=True,
+        )
+
+        # Override prompt to the log channel
         block_embed = discord.Embed(
-            title="⛔ Eligibility Block — Hire Prevented",
+            title="⛔ Hire Blocked — Eligibility Check Failed",
             description=(
-                f"{discord_account.mention} does not currently meet the eligibility requirements to be hired.\n\n"
-                f"You can **override** this and hire them anyway, or **cancel** the hire below."
+                f"{interaction.user.mention} attempted to hire {discord_account.mention} "
+                f"but they did not pass the eligibility check.\n\n"
+                f"Use the buttons below to override or cancel."
             ),
             color=embed_color,
             timestamp=datetime.now(),
         )
-        block_embed.add_field(name="Teaching Name",   value=teaching_name,           inline=True)
-        block_embed.add_field(name="Roblox Username", value=roblox_username,         inline=True)
-        block_embed.add_field(name="Discord Account", value=discord_account.mention, inline=True)
-        block_embed.add_field(name="Discord ID",      value=discord_user_id,         inline=True)
-        block_embed.add_field(name="Area",            value=area,                    inline=True)
-        block_embed.add_field(name="Role",            value=role,                    inline=True)
-        block_embed.add_field(name="Reason Blocked",  value=reason_label,            inline=False)
-        block_embed.set_footer(text=f"Triggered by {interaction.user.display_name}")
+        block_embed.add_field(name="Attempted By",    value=interaction.user.mention, inline=True)
+        block_embed.add_field(name="Target User",     value=discord_account.mention,  inline=True)
+        block_embed.add_field(name="Discord ID",      value=discord_user_id,          inline=True)
+        block_embed.add_field(name="Teaching Name",   value=teaching_name,            inline=True)
+        block_embed.add_field(name="Roblox Username", value=roblox_username,          inline=True)
+        block_embed.add_field(name="Area",            value=area,                     inline=True)
+        block_embed.add_field(name="Role",            value=role,                     inline=True)
+        block_embed.add_field(name="Reason Blocked",  value=reason_label,             inline=False)
+        block_embed.set_footer(text=f"Attempted by {interaction.user.display_name} · {interaction.user.id}")
 
         view = HireOverrideView(
             hiring_staff=interaction.user,
@@ -2250,11 +2255,17 @@ async def hire(
             block_reason=reason_label,
         )
 
-        await interaction.followup.send(embed=block_embed, view=view)
+        log_channel = interaction.client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
+        if log_channel:
+            try:
+                await log_channel.send(embed=block_embed, view=view)
+            except Exception as e:
+                print(f"[Hire] Failed to send block notification: {e}")
         return
 
-    # --- No block — proceed normally ---
+    # No block — proceed normally
     await _execute_hire(interaction, teaching_name, roblox_username, discord_account, area, role)
+
 
 # -------------------------------------------------
 #  /removestaff
