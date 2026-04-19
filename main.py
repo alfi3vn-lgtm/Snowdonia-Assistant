@@ -220,8 +220,6 @@ TIMETABLE_POST_TIME               = "21:15"
 YEAR_LEADER_ROLE_ID               = 0
 TIMETABLE_ADMIN_ROLE_ID           = 1438202314476228678
 
-TIKTOK_ANNOUNCEMENT_CHANNEL_ID = 1491161732880666818
-
 ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
 ROBLOX_GROUP_ID = 779411059
 
@@ -2336,21 +2334,20 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
         await interaction.followup.send(f"Sheet '{CURRENT_STAFF_SHEET}' not found!")
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
-
 # -------------------------------------------------
 #  WEEKLY TIKTOK REMINDER TASK
 # -------------------------------------------------
+TIKTOK_ANNOUNCEMENT_CHANNEL_ID = 1491161732880666818
+
 @tasks.loop(minutes=1)
 async def weekly_tiktok_task():
     import datetime as dt
 
-    # UK time offset: UTC+1 (BST) Apr–Oct, UTC+0 (GMT) otherwise
     now_utc = dt.datetime.utcnow()
     month = now_utc.month
     utc_offset = 1 if 4 <= month <= 10 else 0
     now_uk = now_utc + dt.timedelta(hours=utc_offset)
 
-    # Only fire on Sundays (weekday() == 6) at 13:00
     if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:00":
         return
 
@@ -2361,7 +2358,6 @@ async def weekly_tiktok_task():
         return
     weekly_tiktok_task.sent_keys.add(minute_key)
 
-    # Prune old keys
     cutoff = (now_uk - dt.timedelta(days=2)).strftime("%Y-%m-%d-%H-%M")
     weekly_tiktok_task.sent_keys = {k for k in weekly_tiktok_task.sent_keys if k > cutoff}
 
@@ -2391,6 +2387,7 @@ async def weekly_tiktok_task():
 @weekly_tiktok_task.before_loop
 async def before_weekly_tiktok():
     await bot.wait_until_ready()
+    weekly_tiktok_task.start() if not weekly_tiktok_task.is_running() else None
     print("Weekly TikTok task started")
 
 
