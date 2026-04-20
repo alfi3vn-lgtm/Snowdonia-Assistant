@@ -310,7 +310,7 @@ FIELD_MAP = {
 }
 
 BLOCKED_APP_LOG_CHANNEL_ID = 1495061332741853438
-
+COMMAND_LOG_CHANNEL_ID     = 1495796902082646209
 
 # -------------------------------------------------
 #  NAME INITIALING LOGIC
@@ -3545,6 +3545,122 @@ async def customrolerequest(interaction: discord.Interaction, name: str, color: 
 
     await log_channel.send(embed=request_embed, view=view)
     await interaction.response.send_message("✅ Your role request has been submitted!", ephemeral=True)
+
+# ---- SNIPPET TO INSERT INTO bot.py ----
+# Place COMMAND_LOG_CHANNEL_ID right after BLOCKED_APP_LOG_CHANNEL_ID:
+#
+#   BLOCKED_APP_LOG_CHANNEL_ID = 1495061332741853438
+#   COMMAND_LOG_CHANNEL_ID     = 1495796902082646209  ← ADD THIS
+#
+# Then place the on_interaction event handler shown below
+# directly after the on_ready event (or anywhere in the bot events section).
+
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    # Only log slash / context-menu commands (type 2), not buttons / modals
+    if interaction.type != discord.InteractionType.application_command:
+        return
+
+    log_channel = bot.get_channel(COMMAND_LOG_CHANNEL_ID)
+    if not log_channel:
+        return
+
+    try:
+        command_name = (
+            interaction.command.qualified_name
+            if interaction.command
+            else interaction.data.get("name", "Unknown")
+        )
+
+        # ---------- format options / parameters ----------
+        def _fmt_options(options: list, depth: int = 0) -> list[str]:
+            lines = []
+            indent = "  " * depth
+            for opt in options:
+                name  = opt.get("name", "?")
+                value = opt.get("value")
+                sub   = opt.get("options", [])
+                if value is not None:
+                    lines.append(f"{indent}`{name}`: {value}")
+                elif sub:
+                    lines.append(f"{indent}`{name}`:")
+                    lines.extend(_fmt_options(sub, depth + 1))
+                else:
+                    lines.append(f"{indent}`{name}`")
+            return lines
+
+        raw_options  = interaction.data.get("options", [])
+        params_lines = _fmt_options(raw_options)
+        params_text  = "\n".join(params_lines) if params_lines else "*none*"
+
+        # ---------- channel / guild info ----------
+        if interaction.channel:
+            if hasattr(interaction.channel, "mention"):
+                channel_text = f"{interaction.channel.mention}\n`#{interaction.channel.name}`"
+            else:
+                channel_text = f"`{interaction.channel}`"
+        else:
+            channel_text = "Unknown / DM"
+
+        guild_text = (
+            f"{interaction.guild.name}\n`{interaction.guild.id}`"
+            if interaction.guild
+            else "DM"
+        )
+
+        # ---------- build embed ----------
+        embed = discord.Embed(
+            title="🖥️ Slash Command Used",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(
+            name="Command",
+            value=f"`/{command_name}`",
+            inline=True,
+        )
+        embed.add_field(
+            name="User",
+            value=(
+                f"{interaction.user.mention}\n"
+                f"`{interaction.user}` — ID: `{interaction.user.id}`"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Channel",
+            value=channel_text,
+            inline=True,
+        )
+        embed.add_field(
+            name="Server",
+            value=guild_text,
+            inline=True,
+        )
+        embed.add_field(
+            name="Time (UTC)",
+            value=f"<t:{int(interaction.created_at.timestamp())}:F>\n<t:{int(interaction.created_at.timestamp())}:R>",
+            inline=True,
+        )
+        embed.add_field(
+            name="Parameters",
+            value=params_text[:1024],  # embed field limit
+            inline=False,
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_footer(
+            text=(
+                f"Interaction ID: {interaction.id}  •  "
+                f"Guild: {interaction.guild_id}  •  "
+                f"User: {interaction.user.id}"
+            )
+        )
+
+        await log_channel.send(embed=embed)
+
+    except Exception as e:
+        print(f"[CommandLog] Failed to log interaction: {e}")
 
 
 # -------------------------------------------------
