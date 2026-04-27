@@ -2531,30 +2531,29 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
         await interaction.followup.send(f"Sheet '{CURRENT_STAFF_SHEET}' not found!")
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
+
 # -------------------------------------------------
 #  TIKTOK REMINDER TASK (9 PM UK, every 3 days)
 # -------------------------------------------------
+import datetime as dt  # <-- move/ensure this is at the top of your file
+
 TIKTOK_ANNOUNCEMENT_CHANNEL_ID = 1491161732880666818
-TIKTOK_START_DATE = dt.date(2026, 4, 27)  # today — the cycle starts here
+TIKTOK_START_DATE = dt.date(2026, 4, 27)
 
 @tasks.loop(minutes=1)
 async def weekly_tiktok_task():
-    import datetime as dt
     now_utc = dt.datetime.utcnow()
     month = now_utc.month
     utc_offset = 1 if 4 <= month <= 10 else 0
     now_uk = now_utc + dt.timedelta(hours=utc_offset)
 
-    # Only fire at 21:00 UK time
-    if now_uk.strftime("%H:%M") != "21:15":
+    if now_uk.strftime("%H:%M") != "21:30":
         return
 
-    # Only fire every 3 days from the start date
     days_since_start = (now_uk.date() - TIKTOK_START_DATE).days
     if days_since_start < 0 or days_since_start % 3 != 0:
         return
 
-    # Deduplicate — prevent double-sends within the same minute
     minute_key = now_uk.strftime("%Y-%m-%d-%H-%M")
     if not hasattr(weekly_tiktok_task, 'sent_keys'):
         weekly_tiktok_task.sent_keys = set()
@@ -2562,7 +2561,6 @@ async def weekly_tiktok_task():
         return
     weekly_tiktok_task.sent_keys.add(minute_key)
 
-    # Trim old keys (keep only last 4 days)
     cutoff = (now_uk - dt.timedelta(days=4)).strftime("%Y-%m-%d-%H-%M")
     weekly_tiktok_task.sent_keys = {k for k in weekly_tiktok_task.sent_keys if k > cutoff}
 
