@@ -2546,7 +2546,7 @@ async def weekly_tiktok_task():
     now_uk = now_utc + dt.timedelta(hours=utc_offset)
 
     # Only fire at 21:00 UK time
-    if now_uk.strftime("%H:%M") != "21:00":
+    if now_uk.strftime("%H:%M") != "21:15":
         return
 
     # Only fire every 3 days from the start date
