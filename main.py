@@ -2532,22 +2532,29 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
     except Exception as e:
         await interaction.followup.send(f"Unexpected error: {e}")
 # -------------------------------------------------
-#  WEEKLY TIKTOK REMINDER TASK
+#  TIKTOK REMINDER TASK (9 PM UK, every 3 days)
 # -------------------------------------------------
 TIKTOK_ANNOUNCEMENT_CHANNEL_ID = 1491161732880666818
+TIKTOK_START_DATE = dt.date(2026, 4, 27)  # today — the cycle starts here
 
 @tasks.loop(minutes=1)
 async def weekly_tiktok_task():
     import datetime as dt
-
     now_utc = dt.datetime.utcnow()
     month = now_utc.month
     utc_offset = 1 if 4 <= month <= 10 else 0
     now_uk = now_utc + dt.timedelta(hours=utc_offset)
 
-    if now_uk.weekday() != 6 or now_uk.strftime("%H:%M") != "13:30":
+    # Only fire at 21:00 UK time
+    if now_uk.strftime("%H:%M") != "21:00":
         return
 
+    # Only fire every 3 days from the start date
+    days_since_start = (now_uk.date() - TIKTOK_START_DATE).days
+    if days_since_start < 0 or days_since_start % 3 != 0:
+        return
+
+    # Deduplicate — prevent double-sends within the same minute
     minute_key = now_uk.strftime("%Y-%m-%d-%H-%M")
     if not hasattr(weekly_tiktok_task, 'sent_keys'):
         weekly_tiktok_task.sent_keys = set()
@@ -2555,7 +2562,8 @@ async def weekly_tiktok_task():
         return
     weekly_tiktok_task.sent_keys.add(minute_key)
 
-    cutoff = (now_uk - dt.timedelta(days=2)).strftime("%Y-%m-%d-%H-%M")
+    # Trim old keys (keep only last 4 days)
+    cutoff = (now_uk - dt.timedelta(days=4)).strftime("%Y-%m-%d-%H-%M")
     weekly_tiktok_task.sent_keys = {k for k in weekly_tiktok_task.sent_keys if k > cutoff}
 
     ch = bot.get_channel(TIKTOK_ANNOUNCEMENT_CHANNEL_ID)
@@ -2574,17 +2582,16 @@ async def weekly_tiktok_task():
         "If you're unsure where to start or have ideas, feel free to reach out to the Marketing Team!\n"
         "<@&1484863012933210143>"
     )
-
     try:
         await ch.send(message)
-        print(f"[TikTok] Weekly reminder sent at {now_uk.strftime('%Y-%m-%d %H:%M')} UK time")
+        print(f"[TikTok] Reminder sent at {now_uk.strftime('%Y-%m-%d %H:%M')} UK time")
     except Exception as e:
         print(f"[TikTok] Failed to send: {e}")
 
 @weekly_tiktok_task.before_loop
 async def before_weekly_tiktok():
     await bot.wait_until_ready()
-    print("Weekly TikTok task started")
+    print("TikTok reminder task started (every 3 days at 21:00 UK)")
 
 
 # -------------------------------------------------
