@@ -54,7 +54,6 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "strike":               15,
     "revokestrike":         15,
     "loa":                  15,
-    "endloa":               15,
     "logtraining":          15,
     "attendance":           10,
     "resetattendance":      60,
@@ -223,6 +222,10 @@ TIMETABLE_ADMIN_ROLE_ID           = 1438202314476228678
 ROBLOX_COOKIE   = os.getenv('ROBLOX_AUTH_TOKEN')
 ROBLOX_GROUP_ID = 779411059
 
+# LOA config
+LOA_ROLE_ID                  = 1500248269291393155
+LOA_NOTIFICATION_CHANNEL_ID  = 1500248715842027672
+
 ROLE_NAME_MAP = {
     "School Staff":                  "Teaching Staff",
     "Deputy Head of Year 7":         "Deputy Head of Year",
@@ -276,30 +279,17 @@ ATTEND_NAME_COL    = 1
 ATTEND_CHECK_START = 2
 ATTEND_CHECK_END   = 9
 
-# ------------------------------------------------------------------
-#  Remove Staff Log column layout (1-indexed columns, 0-indexed below)
-#  Col B (index 1) = Teaching Name
-#  Col C (index 2) = Date of Removal
-#  Col D (index 3) = Discord ID
-#  Col E (index 4) = Reason for Removal
-# ------------------------------------------------------------------
-RSL_NAME_COL       = 1   # Col B - Teaching Name
-RSL_DATE_COL       = 2   # Col C - Date of Removal
-RSL_REASON_COL     = 3   # Col D - Reason
-RSL_DISCORD_ID_COL = 4   # Col E - Discord ID
-RSL_DATA_START     = 5   # First data row
-# ------------------------------------------------------------------
-#  Blacklisted Staff column layout
-#  Col B (index 1) = Discord ID
-#  Col C (index 2) = Roblox Username
-#  Col D (index 3) = Date of Blacklist
-#  Col E (index 4) = Reason
-# ------------------------------------------------------------------
-BL_DISCORD_ID_COL = 1   # Col B
-BL_ROBLOX_COL     = 2   # Col C
-BL_DATE_COL       = 3   # Col D
-BL_REASON_COL     = 4   # Col E
-BL_DATA_START     = 5   # First data row
+RSL_NAME_COL       = 1
+RSL_DATE_COL       = 2
+RSL_REASON_COL     = 3
+RSL_DISCORD_ID_COL = 4
+RSL_DATA_START     = 5
+
+BL_DISCORD_ID_COL = 1
+BL_ROBLOX_COL     = 2
+BL_DATE_COL       = 3
+BL_REASON_COL     = 4
+BL_DATA_START     = 5
 
 FIELD_MAP = {
     "role":            ("Role",             "C6"),
@@ -557,6 +547,116 @@ async def clear_discord_roles_and_reset_nick(
             embed.add_field(name="Nickname", value=f"⚠️ Error: {e}", inline=False)
 
 
+# -------------------------------------------------
+#  LOA DISCORD HELPERS
+# -------------------------------------------------
+
+async def apply_loa_discord(
+    guild: discord.Guild,
+    staff_name: str,
+    sheet_role: str,
+    discord_id_str: str,
+    *,
+    embed: discord.Embed | None = None,
+) -> None:
+    """Add LOA role and prefix nickname with 'LOA | '."""
+    if not discord_id_str or discord_id_str == "N/A":
+        if embed:
+            embed.add_field(name="Discord LOA", value="➖ No Discord ID on file", inline=False)
+        return
+
+    member = await get_discord_member_by_id(guild, discord_id_str)
+    if not member:
+        if embed:
+            embed.add_field(name="Discord LOA", value="⚠️ Member not found in server", inline=False)
+        return
+
+    # Add LOA role
+    loa_role = guild.get_role(LOA_ROLE_ID)
+    if loa_role:
+        try:
+            await member.add_roles(loa_role, reason="LOA started")
+            if embed:
+                embed.add_field(name="LOA Role", value="✅ Added", inline=True)
+        except discord.Forbidden:
+            if embed:
+                embed.add_field(name="LOA Role", value="⚠️ Missing permissions to add role", inline=True)
+        except Exception as e:
+            if embed:
+                embed.add_field(name="LOA Role", value=f"⚠️ {e}", inline=True)
+    else:
+        if embed:
+            embed.add_field(name="LOA Role", value="⚠️ LOA role not found in server", inline=True)
+
+    # Prefix nickname with "LOA | "
+    base_nick = get_nickname_for_sheet_role(staff_name, sheet_role) if sheet_role and sheet_role != "N/A" else staff_name
+    loa_nick  = f"LOA | {base_nick}"[:32]
+    try:
+        await member.edit(nick=loa_nick, reason="LOA started")
+        if embed:
+            embed.add_field(name="Nickname", value=f"✅ Set to: `{loa_nick}`", inline=True)
+    except discord.Forbidden:
+        if embed:
+            embed.add_field(name="Nickname", value="⚠️ Missing permissions to change nickname", inline=True)
+    except Exception as e:
+        if embed:
+            embed.add_field(name="Nickname", value=f"⚠️ {e}", inline=True)
+
+
+async def remove_loa_discord(
+    guild: discord.Guild,
+    staff_name: str,
+    sheet_role: str,
+    discord_id_str: str,
+    *,
+    embed: discord.Embed | None = None,
+) -> None:
+    """Remove LOA role and restore normal nickname."""
+    if not discord_id_str or discord_id_str == "N/A":
+        if embed:
+            embed.add_field(name="Discord LOA", value="➖ No Discord ID on file", inline=False)
+        return
+
+    member = await get_discord_member_by_id(guild, discord_id_str)
+    if not member:
+        if embed:
+            embed.add_field(name="Discord LOA", value="⚠️ Member not found in server", inline=False)
+        return
+
+    # Remove LOA role
+    loa_role = guild.get_role(LOA_ROLE_ID)
+    if loa_role and loa_role in member.roles:
+        try:
+            await member.remove_roles(loa_role, reason="LOA ended")
+            if embed:
+                embed.add_field(name="LOA Role", value="✅ Removed", inline=True)
+        except discord.Forbidden:
+            if embed:
+                embed.add_field(name="LOA Role", value="⚠️ Missing permissions to remove role", inline=True)
+        except Exception as e:
+            if embed:
+                embed.add_field(name="LOA Role", value=f"⚠️ {e}", inline=True)
+    elif embed:
+        embed.add_field(name="LOA Role", value="➖ Role not present (already removed?)", inline=True)
+
+    # Restore normal nickname
+    if sheet_role and sheet_role != "N/A":
+        normal_nick = get_nickname_for_sheet_role(staff_name, sheet_role)[:32]
+    else:
+        normal_nick = staff_name[:32]
+
+    try:
+        await member.edit(nick=normal_nick, reason="LOA ended — nickname restored")
+        if embed:
+            embed.add_field(name="Nickname", value=f"✅ Restored to: `{normal_nick}`", inline=True)
+    except discord.Forbidden:
+        if embed:
+            embed.add_field(name="Nickname", value="⚠️ Missing permissions to change nickname", inline=True)
+    except Exception as e:
+        if embed:
+            embed.add_field(name="Nickname", value=f"⚠️ {e}", inline=True)
+
+
 async def get_discord_member_by_id(guild: discord.Guild, discord_id: str) -> discord.Member | None:
     try:
         uid    = int(discord_id)
@@ -607,11 +707,6 @@ print(f"Roblox cookie present: {bool(ROBLOX_COOKIE)}", flush=True)
 # -------------------------------------------------
 
 async def check_application_eligibility(discord_id: str) -> tuple[bool, str]:
-    """
-    Returns (can_apply, reason_code).
-    reason_code: "blacklisted" | "recent_staff" | ""
-    """
-    # 1. Check blacklist — Discord ID in col B (index 1) of Blacklisted Staff
     try:
         bl_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(BLACKLISTED_STAFF_SHEET).get_all_values()
@@ -624,7 +719,6 @@ async def check_application_eligibility(discord_id: str) -> tuple[bool, str]:
     except Exception as e:
         print(f"[Apply] Blacklist check error: {e}")
 
-    # 2. Check recent removal — Discord ID in col D (index 3), date in col C (index 2)
     try:
         rsl_data = await safe_sheets_call(
             lambda: spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET).get_all_values()
@@ -1043,6 +1137,131 @@ async def before_timetable_reminder():
 
 
 # -------------------------------------------------
+#  LOA CHECK TASK  (runs daily at 09:00)
+# -------------------------------------------------
+
+def _parse_loa_end_date(loa_value: str):
+    """Parse 'YYYY-MM-DD - YYYY-MM-DD' and return end date as datetime.date, or None."""
+    if not loa_value or loa_value == "N/A":
+        return None
+    parts = loa_value.split(" - ")
+    if len(parts) != 2:
+        return None
+    date_str = parts[1].strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+@tasks.loop(minutes=1)
+async def loa_check_task():
+    now = datetime.now()
+    if now.strftime("%H:%M") != "09:00":
+        return
+
+    day_key = now.strftime("%Y-%m-%d")
+    if not hasattr(loa_check_task, 'checked_days'):
+        loa_check_task.checked_days = set()
+    if day_key in loa_check_task.checked_days:
+        return
+    loa_check_task.checked_days.add(day_key)
+
+    # Prune old keys
+    cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    loa_check_task.checked_days = {k for k in loa_check_task.checked_days if k >= cutoff}
+
+    print(f"[LOA] Running daily LOA check for {day_key}")
+
+    if not spreadsheet:
+        print("[LOA] Sheets not connected — skipping check")
+        return
+
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+    except Exception as e:
+        print(f"[LOA] Failed to read sheet: {e}")
+        return
+
+    today    = now.date()
+    tomorrow = today + timedelta(days=1)
+
+    notification_channel = bot.get_channel(LOA_NOTIFICATION_CHANNEL_ID)
+
+    for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+        teaching_name = safe_get(row, CURRENT_STAFF_NAME_COL)
+        sheet_role    = safe_get(row, 1)
+        discord_id    = safe_get(row, 7)
+        loa_value     = safe_get(row, 6)
+
+        if not teaching_name or teaching_name == "N/A":
+            continue
+        if not loa_value or loa_value == "N/A":
+            continue
+
+        end_date = _parse_loa_end_date(loa_value)
+        if end_date is None:
+            continue
+
+        # ── Notify staff member the day before LOA ends ──
+        if end_date == tomorrow:
+            print(f"[LOA] Sending tomorrow-reminder to {teaching_name} (LOA ends {end_date})")
+            if notification_channel and discord_id and discord_id != "N/A":
+                try:
+                    await notification_channel.send(
+                        f"<@{discord_id}> 👋 Just a heads-up — your Leave of Absence ends **tomorrow** "
+                        f"({end_date.strftime('%d %B %Y')}). You'll be expected back at sessions as normal from then. "
+                        f"Welcome back! 🎉"
+                    )
+                except Exception as e:
+                    print(f"[LOA] Failed to send tomorrow-notification to {teaching_name}: {e}")
+
+        # ── Auto-end LOA when the end date has been reached ──
+        if today >= end_date:
+            print(f"[LOA] Auto-ending LOA for {teaching_name} (end date was {end_date})")
+
+            # 1. Clear LOA in the sheet via Apps Script
+            try:
+                params = {"action": "endloa", "staffName": teaching_name}
+                status, resp_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
+                if status == 200 and "error" not in resp_text.lower():
+                    print(f"[LOA] Sheet LOA cleared for {teaching_name}")
+                else:
+                    print(f"[LOA] Sheet clear failed for {teaching_name}: HTTP {status} — {resp_text[:200]}")
+            except Exception as e:
+                print(f"[LOA] Apps Script error for {teaching_name}: {e}")
+
+            # 2. Update Discord (roles + nickname)
+            for guild in bot.guilds:
+                if discord_id and discord_id != "N/A":
+                    await remove_loa_discord(guild, teaching_name, sheet_role, discord_id)
+                    break
+
+            # 3. Post in notification channel (only on the exact end date, not catch-up days)
+            if today == end_date and notification_channel and discord_id and discord_id != "N/A":
+                try:
+                    await notification_channel.send(
+                        f"<@{discord_id}> ✅ Your Leave of Absence has now ended. "
+                        f"Your roles and nickname have been restored. Welcome back!"
+                    )
+                except Exception as e:
+                    print(f"[LOA] Failed to send end-notification to {teaching_name}: {e}")
+
+            # Small delay between staff members to avoid rate limits
+            await asyncio.sleep(1)
+
+
+@loa_check_task.before_loop
+async def before_loa_check():
+    await bot.wait_until_ready()
+    print("LOA check task started")
+
+
+# -------------------------------------------------
 #  SELF-PING TASK
 # -------------------------------------------------
 @tasks.loop(seconds=SELF_PING_INTERVAL)
@@ -1111,6 +1330,8 @@ async def on_ready():
         timetable_reminder_task.start()
     if not weekly_tiktok_task.is_running():
         weekly_tiktok_task.start()
+    if not loa_check_task.is_running():
+        loa_check_task.start()
 
 
 # -------------------------------------------------
@@ -1865,77 +2086,182 @@ async def revoke_strike(interaction: discord.Interaction, staff_name: str):
 
 
 # -------------------------------------------------
-#  /loa
+#  /loa  — interactive date select version
 # -------------------------------------------------
+
+class LoaEndDateSelect(discord.ui.Select):
+    def __init__(self, staff_name: str, reason: str, start_date_str: str, invoker_id: int):
+        self.staff_name      = staff_name
+        self.reason          = reason
+        self.start_date_str  = start_date_str
+        self.invoker_id      = invoker_id
+
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        options = []
+        # Up to 25 days from start (Discord select max = 25)
+        for i in range(1, 26):
+            d = start_date + timedelta(days=i)
+            options.append(discord.SelectOption(
+                label=d.strftime("%d %B %Y"),
+                value=d.strftime("%Y-%m-%d"),
+            ))
+
+        super().__init__(
+            placeholder="Select LOA end date...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="loa_end_date_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.invoker_id:
+            return await interaction.response.send_message(
+                "❌ This isn't your LOA form.", ephemeral=True
+            )
+
+        await interaction.response.defer()
+
+        start_date = datetime.strptime(self.start_date_str, "%Y-%m-%d").date()
+        end_date   = datetime.strptime(self.values[0], "%Y-%m-%d").date()
+        loa_value  = f"{start_date.strftime('%Y-%m-%d')} - {end_date.strftime('%Y-%m-%d')}"
+
+        params = {
+            "action":    "loa",
+            "staffName": self.staff_name,
+            "loaValue":  loa_value,
+            "loaReason": self.reason.strip(),
+        }
+
+        embed = discord.Embed(title="📅 Leave of Absence Set", color=discord.Color.blue())
+        embed.add_field(name="Staff Member", value=self.staff_name,                inline=True)
+        embed.add_field(name="Start Date",   value=start_date.strftime("%d %B %Y"), inline=True)
+        embed.add_field(name="End Date",     value=end_date.strftime("%d %B %Y"),   inline=True)
+        embed.add_field(name="Reason",       value=self.reason,                     inline=False)
+        embed.set_footer(text="LOA recorded — will auto-end on the end date")
+
+        try:
+            status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
+
+            if status == 200 and "error" not in response_text.lower():
+                embed.add_field(name="Sheet", value="✅ Recorded", inline=True)
+            else:
+                embed.add_field(name="Sheet", value=f"⚠️ HTTP {status}: {response_text[:200]}", inline=True)
+
+        except Exception as e:
+            embed.add_field(name="Sheet", value=f"⚠️ Error: {e}", inline=True)
+
+        # Apply Discord changes (LOA role + nickname prefix)
+        sheet_role = await get_role_for_staff(self.staff_name)
+        discord_id = await get_discord_id_for_staff(self.staff_name)
+        guild      = interaction.guild
+
+        if guild and sheet_role and sheet_role != "N/A":
+            await apply_loa_discord(
+                guild, self.staff_name, sheet_role, discord_id or "N/A", embed=embed
+            )
+        else:
+            embed.add_field(name="Discord LOA", value="⚠️ Could not determine role — skipped", inline=False)
+
+        # Disable the view so it can't be used again
+        for child in self.view.children:
+            child.disabled = True
+
+        await interaction.edit_original_response(
+            content=None,
+            embed=embed,
+            view=self.view,
+        )
+
+
+class LoaEndDateView(discord.ui.View):
+    def __init__(self, staff_name: str, reason: str, start_date_str: str, invoker_id: int):
+        super().__init__(timeout=180)
+        self.add_item(LoaEndDateSelect(staff_name, reason, start_date_str, invoker_id))
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
+class LoaStartDateSelect(discord.ui.Select):
+    def __init__(self, staff_name: str, reason: str, invoker_id: int):
+        self.staff_name = staff_name
+        self.reason     = reason
+        self.invoker_id = invoker_id
+
+        today   = datetime.now().date()
+        options = []
+        for i in range(4):  # today, +1, +2, +3
+            d     = today + timedelta(days=i)
+            label = d.strftime("%d %B %Y")
+            if i == 0:
+                label += " (Today)"
+            options.append(discord.SelectOption(label=label, value=d.strftime("%Y-%m-%d")))
+
+        super().__init__(
+            placeholder="Select LOA start date...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="loa_start_date_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.invoker_id:
+            return await interaction.response.send_message(
+                "❌ This isn't your LOA form.", ephemeral=True
+            )
+
+        start_date_str = self.values[0]
+        start_date     = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+
+        end_view = LoaEndDateView(self.staff_name, self.reason, start_date_str, self.invoker_id)
+
+        await interaction.response.edit_message(
+            content=(
+                f"**📅 LOA for {self.staff_name}**\n"
+                f"Start date: `{start_date.strftime('%d %B %Y')}`\n\n"
+                f"Now select the **end date** (up to 25 days from start):"
+            ),
+            view=end_view,
+        )
+
+
+class LoaStartDateView(discord.ui.View):
+    def __init__(self, staff_name: str, reason: str, invoker_id: int):
+        super().__init__(timeout=180)
+        self.add_item(LoaStartDateSelect(staff_name, reason, invoker_id))
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
 @bot.tree.command(name="loa", description="Set a Leave of Absence for a staff member")
-@app_commands.describe(staff_name="Select the staff member", start_date="Start date (e.g. 2024-01-15)", end_date="End date (e.g. 2024-01-30)", reason="Reason for the leave of absence")
+@app_commands.describe(
+    staff_name="Select the staff member",
+    reason="Reason for the leave of absence",
+)
 @app_commands.autocomplete(staff_name=edit_staff_autocomplete)
 @cooldown()
-async def set_loa(interaction: discord.Interaction, staff_name: str, start_date: str, end_date: str, reason: str):
-    await interaction.response.defer()
+async def set_loa(interaction: discord.Interaction, staff_name: str, reason: str):
+    if not reason or not reason.strip():
+        return await interaction.response.send_message(
+            "❌ A reason is required.", ephemeral=True
+        )
 
-    if not start_date.strip() or not end_date.strip() or not reason.strip():
-        await interaction.followup.send("❌ Start date, end date, and reason are all required.")
-        return
+    view = LoaStartDateView(
+        staff_name=staff_name,
+        reason=reason,
+        invoker_id=interaction.user.id,
+    )
 
-    loa_value = f"{start_date.strip()} - {end_date.strip()}"
-    params    = {"action": "loa", "staffName": staff_name, "loaValue": loa_value, "loaReason": reason.strip()}
-
-    try:
-        status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
-
-        if status == 200 and "error" not in response_text.lower():
-            embed = discord.Embed(title="📅 Leave of Absence Set", color=discord.Color.blue())
-            embed.add_field(name="Staff Member", value=staff_name, inline=True)
-            embed.add_field(name="Start Date",   value=start_date, inline=True)
-            embed.add_field(name="End Date",     value=end_date,   inline=True)
-            embed.add_field(name="LOA Period",   value=loa_value,  inline=False)
-            embed.add_field(name="Reason",       value=reason,     inline=False)
-            embed.set_footer(text="LOA has been recorded")
-            await interaction.followup.send(embed=embed)
-        else:
-            await interaction.followup.send(f"Apps Script error (HTTP {status}):\n```{response_text[:500]}```")
-    except aiohttp.ClientError as e:
-        await interaction.followup.send(f"Could not reach the Apps Script web app: {e}")
-    except Exception as e:
-        await interaction.followup.send(f"Unexpected error: {e}")
-
-
-# -------------------------------------------------
-#  /endloa
-# -------------------------------------------------
-@bot.tree.command(name="endloa", description="End a staff member's Leave of Absence")
-@app_commands.describe(staff_name="Select the staff member")
-@app_commands.autocomplete(staff_name=edit_staff_autocomplete)
-@cooldown()
-async def end_loa(interaction: discord.Interaction, staff_name: str):
-    await interaction.response.defer()
-
-    params = {"action": "endloa", "staffName": staff_name}
-
-    try:
-        status, response_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
-
-        if status == 200 and "error" not in response_text.lower():
-            previous_loa = "N/A"
-            if "previous_loa:" in response_text:
-                try:
-                    previous_loa = response_text.split("previous_loa:")[1].strip()
-                except Exception:
-                    pass
-
-            embed = discord.Embed(title="✅ Leave of Absence Ended", color=discord.Color.green())
-            embed.add_field(name="Staff Member", value=staff_name,   inline=True)
-            embed.add_field(name="Previous LOA", value=previous_loa, inline=True)
-            embed.add_field(name="Status",       value="Active",     inline=True)
-            embed.set_footer(text="LOA ended")
-            await interaction.followup.send(embed=embed)
-        else:
-            await interaction.followup.send(f"Apps Script error (HTTP {status}):\n```{response_text[:500]}```")
-    except aiohttp.ClientError as e:
-        await interaction.followup.send(f"Could not reach the Apps Script web app: {e}")
-    except Exception as e:
-        await interaction.followup.send(f"Unexpected error: {e}")
+    await interaction.response.send_message(
+        f"**📅 LOA for {staff_name}**\n\nSelect the **start date** for the LOA:",
+        view=view,
+        ephemeral=True,
+    )
 
 
 # -------------------------------------------------
@@ -2218,13 +2544,11 @@ async def hire(
             reason_label = f"Unknown (`{block_reason}`)"
             embed_color  = discord.Color.greyple()
 
-        # Quiet message to the person who ran the command
         await interaction.followup.send(
             "Whoops! Looks like you can't hire them right now. Try again later!",
             ephemeral=True,
         )
 
-        # Override prompt to the log channel
         block_embed = discord.Embed(
             title="⛔ Hire Blocked — Eligibility Check Failed",
             description=(
@@ -2263,7 +2587,6 @@ async def hire(
                 print(f"[Hire] Failed to send block notification: {e}")
         return
 
-    # No block — proceed normally
     await _execute_hire(interaction, teaching_name, roblox_username, discord_account, area, role)
 
 
@@ -2298,16 +2621,14 @@ async def remove_staff(interaction: discord.Interaction, staff_name: str, reason
             embed.add_field(name="Reason",         value=reason,       inline=False)
             embed.set_footer(text="Staff record has been updated")
 
-            # Write the Discord ID to Column E of the Remove Staff Log
             if target_discord_id and target_discord_id != "N/A":
                 try:
                     def _write_discord_id_to_rsl():
                         ws       = spreadsheet.worksheet(REMOVE_STAFF_LOG_SHEET)
                         all_data = ws.get_all_values()
-                        # Search bottom-up for the most recent matching entry
                         for i in range(len(all_data) - 1, RSL_DATA_START - 2, -1):
                             if safe_get(all_data[i], RSL_NAME_COL).lower() == staff_name.lower():
-                                ws.update_cell(i + 1, 5, target_discord_id)  # Col E = 5 (1-indexed)
+                                ws.update_cell(i + 1, 5, target_discord_id)
                                 return True
                         return False
 
@@ -2535,7 +2856,7 @@ async def staff_info(interaction: discord.Interaction, staff_name: str):
 # -------------------------------------------------
 #  TIKTOK REMINDER TASK (9 PM UK, every 3 days)
 # -------------------------------------------------
-import datetime as dt  # <-- move/ensure this is at the top of your file
+import datetime as dt
 
 TIKTOK_ANNOUNCEMENT_CHANNEL_ID = 1491161732880666818
 TIKTOK_START_DATE = dt.date(2026, 4, 27)
@@ -3551,19 +3872,12 @@ async def customrolerequest(interaction: discord.Interaction, name: str, color: 
     await log_channel.send(embed=request_embed, view=view)
     await interaction.response.send_message("✅ Your role request has been submitted!", ephemeral=True)
 
-# ---- SNIPPET TO INSERT INTO bot.py ----
-# Place COMMAND_LOG_CHANNEL_ID right after BLOCKED_APP_LOG_CHANNEL_ID:
-#
-#   BLOCKED_APP_LOG_CHANNEL_ID = 1495061332741853438
-#   COMMAND_LOG_CHANNEL_ID     = 1495796902082646209  ← ADD THIS
-#
-# Then place the on_interaction event handler shown below
-# directly after the on_ready event (or anywhere in the bot events section).
 
-
+# -------------------------------------------------
+#  COMMAND LOGGING
+# -------------------------------------------------
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    # Only log slash / context-menu commands (type 2), not buttons / modals
     if interaction.type != discord.InteractionType.application_command:
         return
 
@@ -3578,7 +3892,6 @@ async def on_interaction(interaction: discord.Interaction):
             else interaction.data.get("name", "Unknown")
         )
 
-        # ---------- format options / parameters ----------
         def _fmt_options(options: list, depth: int = 0) -> list[str]:
             lines = []
             indent = "  " * depth
@@ -3599,7 +3912,6 @@ async def on_interaction(interaction: discord.Interaction):
         params_lines = _fmt_options(raw_options)
         params_text  = "\n".join(params_lines) if params_lines else "*none*"
 
-        # ---------- channel / guild info ----------
         if interaction.channel:
             if hasattr(interaction.channel, "mention"):
                 channel_text = f"{interaction.channel.mention}\n`#{interaction.channel.name}`"
@@ -3614,17 +3926,12 @@ async def on_interaction(interaction: discord.Interaction):
             else "DM"
         )
 
-        # ---------- build embed ----------
         embed = discord.Embed(
             title="🖥️ Slash Command Used",
             color=discord.Color.blurple(),
             timestamp=datetime.now(),
         )
-        embed.add_field(
-            name="Command",
-            value=f"`/{command_name}`",
-            inline=True,
-        )
+        embed.add_field(name="Command", value=f"`/{command_name}`", inline=True)
         embed.add_field(
             name="User",
             value=(
@@ -3633,26 +3940,14 @@ async def on_interaction(interaction: discord.Interaction):
             ),
             inline=True,
         )
-        embed.add_field(
-            name="Channel",
-            value=channel_text,
-            inline=True,
-        )
-        embed.add_field(
-            name="Server",
-            value=guild_text,
-            inline=True,
-        )
+        embed.add_field(name="Channel", value=channel_text, inline=True)
+        embed.add_field(name="Server",  value=guild_text,   inline=True)
         embed.add_field(
             name="Time (UTC)",
             value=f"<t:{int(interaction.created_at.timestamp())}:F>\n<t:{int(interaction.created_at.timestamp())}:R>",
             inline=True,
         )
-        embed.add_field(
-            name="Parameters",
-            value=params_text[:1024],  # embed field limit
-            inline=False,
-        )
+        embed.add_field(name="Parameters", value=params_text[:1024], inline=False)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_footer(
             text=(
@@ -3709,7 +4004,6 @@ async def _send_blocked_notification(
     teaching_name: str = "N/A",
     stage: str = "/apply command",
 ) -> None:
-    """Shared helper — posts a blocked-application embed to BLOCKED_APP_LOG_CHANNEL_ID."""
     blocked_channel = client.get_channel(BLOCKED_APP_LOG_CHANNEL_ID)
     if not blocked_channel:
         return
@@ -3777,7 +4071,6 @@ class ApplicationModal(discord.ui.Modal, title="Winstree Academy - Teaching Staf
 
         discord_id = str(interaction.user.id)
 
-        # Safety-net check — catches anyone who somehow bypassed the /apply command check
         can_apply, block_reason = await check_application_eligibility(discord_id)
 
         if not can_apply:
