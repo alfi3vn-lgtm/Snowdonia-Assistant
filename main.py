@@ -54,6 +54,7 @@ COMMAND_COOLDOWNS: dict[str, float] = {
     "strike":               15,
     "revokestrike":         15,
     "loa":                  15,
+    "endloa":               15,
     "logtraining":          15,
     "attendance":           10,
     "resetattendance":      60,
@@ -1451,6 +1452,39 @@ async def blacklisted_staff_autocomplete(
 
 
 # -------------------------------------------------
+#  LOA STAFF AUTOCOMPLETE  (only staff currently on LOA)
+# -------------------------------------------------
+async def loa_staff_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Return only staff members who currently have an active LOA set."""
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+        choices = []
+        for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+            name      = safe_get(row, CURRENT_STAFF_NAME_COL)
+            loa_value = safe_get(row, 6)  # column G (index 6)
+
+            # Skip if no name or no active LOA
+            if not name or name == "N/A":
+                continue
+            if not loa_value or loa_value == "N/A":
+                continue
+
+            # Optionally show the LOA dates in the choice label
+            label = f"{name} ({loa_value})"
+            if current.lower() in name.lower() or current.lower() in label.lower():
+                choices.append(app_commands.Choice(name=label[:100], value=name))
+
+        return choices[:25]
+    except Exception as e:
+        print(f"[endloa] LOA staff autocomplete error: {e}")
+        return []
+
+
+# -------------------------------------------------
 #  TIMETABLE COMMANDS
 # -------------------------------------------------
 @bot.tree.command(name="bookacademy", description="Book a slot on the Academy timetable")
@@ -2262,6 +2296,96 @@ async def set_loa(interaction: discord.Interaction, staff_name: str, reason: str
         view=view,
         ephemeral=True,
     )
+
+
+# -------------------------------------------------
+#  /endloa  — manually end a staff member's LOA
+# -------------------------------------------------
+
+@bot.tree.command(name="endloa", description="Manually end a staff member's Leave of Absence early")
+@app_commands.describe(staff_name="Select a staff member currently on LOA")
+@app_commands.autocomplete(staff_name=loa_staff_autocomplete)
+@cooldown()
+async def end_loa(interaction: discord.Interaction, staff_name: str):
+    await interaction.response.defer()
+
+    # Fetch the staff row to confirm they're actually on LOA and grab their details
+    try:
+        all_data = await safe_sheets_call(
+            lambda: spreadsheet.worksheet(CURRENT_STAFF_SHEET).get_all_values()
+        )
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not read staff sheet: {e}")
+        return
+
+    target_row = None
+    for row in all_data[CURRENT_STAFF_DATA_START - 1:]:
+        if (
+            len(row) > CURRENT_STAFF_NAME_COL
+            and row[CURRENT_STAFF_NAME_COL].strip().lower() == staff_name.strip().lower()
+        ):
+            target_row = row
+            break
+
+    if target_row is None:
+        await interaction.followup.send(f"❌ Staff member **{staff_name}** not found.")
+        return
+
+    sheet_role = safe_get(target_row, 1)
+    discord_id = safe_get(target_row, 7)
+    loa_value  = safe_get(target_row, 6)
+
+    # Guard: make sure they actually have an active LOA
+    if not loa_value or loa_value == "N/A":
+        await interaction.followup.send(
+            f"❌ **{staff_name}** does not currently have an active LOA on record."
+        )
+        return
+
+    embed = discord.Embed(
+        title="✅ Leave of Absence Ended",
+        color=discord.Color.green(),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="Staff Member", value=staff_name,  inline=True)
+    embed.add_field(name="Previous LOA", value=loa_value,   inline=True)
+    embed.add_field(name="Ended By",     value=interaction.user.mention, inline=True)
+
+    # 1. Clear LOA in the sheet via Apps Script
+    try:
+        params = {"action": "endloa", "staffName": staff_name}
+        status, resp_text = await safe_apps_script_get(APPS_SCRIPT_URL, params)
+        if status == 200 and "error" not in resp_text.lower():
+            embed.add_field(name="Sheet", value="✅ LOA cleared", inline=False)
+        else:
+            embed.add_field(name="Sheet", value=f"⚠️ HTTP {status}: {resp_text[:200]}", inline=False)
+    except Exception as e:
+        embed.add_field(name="Sheet", value=f"⚠️ Error: {e}", inline=False)
+
+    # 2. Remove LOA role + restore nickname on Discord
+    guild = interaction.guild
+    if guild:
+        await remove_loa_discord(
+            guild, staff_name, sheet_role, discord_id, embed=embed
+        )
+    else:
+        embed.add_field(name="Discord", value="⚠️ Could not access server", inline=False)
+
+    # 3. Notify the staff member if possible
+    if discord_id and discord_id != "N/A" and guild:
+        notification_channel = bot.get_channel(LOA_NOTIFICATION_CHANNEL_ID)
+        if notification_channel:
+            try:
+                await notification_channel.send(
+                    f"<@{discord_id}> ✅ Your Leave of Absence has been ended early by "
+                    f"{interaction.user.mention}. Your roles and nickname have been restored. Welcome back!"
+                )
+                embed.add_field(name="Notification", value="✅ Staff member notified", inline=False)
+            except Exception as e:
+                embed.add_field(name="Notification", value=f"⚠️ Could not notify: {e}", inline=False)
+
+    embed.set_footer(text=f"LOA manually ended by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed)
 
 
 # -------------------------------------------------
