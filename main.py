@@ -252,7 +252,7 @@ ROLE_NAME_MAP = {
     "Assistant Headteacher":         "Assistant Headteacher",
     "Deputy Headteacher":            "Deputy Headteacher",
     "Headteacher":                   "Headteacher",
-    "Executive Headteacher":         "Executive Headteacher",
+    "Chief Operating Officer":       "Chief Operating Officer",
     "Chief Education Officer":       "Chief Education Officer",
 }
 
