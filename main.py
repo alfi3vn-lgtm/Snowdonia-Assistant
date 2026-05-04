@@ -2514,7 +2514,7 @@ async def _execute_hire(
                     "- You are required to complete your Initial Teacher Training within one week of receiving this message.\n"
                     "- All staff members are expected to attend four sessions per week (Sunday–Saturday).\n"
                     "- High standards of grammar, punctuation, and spelling (SPaG) must be maintained at all times while on school grounds.\n"
-                    "- Staff sessions begin at 19:45 (UK time) and conclude at 21:10.\n\n"
+                    "- Staff sessions begin at <t:1777920300:t> and conclude at <t:1777925700:t> (Automatically converted to your timezone).\n\n"
                     "Your teaching name and assigned roles have already been recorded. Please run /profile in the server to review your details.\n\n"
                     "We look forward to your attendance at today's session, commencing at 19:45 BST in the briefing room.\n\n"
                     "*Senior Leadership Team*\n"
