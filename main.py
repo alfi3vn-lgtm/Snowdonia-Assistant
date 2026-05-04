@@ -2516,7 +2516,7 @@ async def _execute_hire(
                     "- High standards of grammar, punctuation, and spelling (SPaG) must be maintained at all times while on school grounds.\n"
                     "- Staff sessions begin at <t:1777920300:t> and conclude at <t:1777925700:t> (Automatically converted to your timezone).\n\n"
                     "Your teaching name and assigned roles have already been recorded. Please run /profile in the server to review your details.\n\n"
-                    "We look forward to your attendance at today's session, commencing at 19:45 BST in the briefing room.\n\n"
+                    "We look forward to your attendance at today's session, commencing at <t:1777920300:t> in the briefing room.\n\n"
                     "*Senior Leadership Team*\n"
                     "**Winstree Academy**"
                 )
