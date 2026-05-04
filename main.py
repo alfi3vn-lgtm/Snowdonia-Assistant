@@ -3774,13 +3774,14 @@ async def diagnose_roblox(interaction: discord.Interaction):
 # -------------------------------------------------
 #  SERVER CHECK
 # -------------------------------------------------
-@bot.command(name="servers")
-async def servers(ctx):
+@bot.tree.command(name="servers", description="Shows how many servers the bot is in")
+async def servers(interaction: discord.Interaction):
     channel = bot.get_channel(1484876458127003661)
     server_list = "\n".join([f"- {guild.name}" for guild in bot.guilds])
     await channel.send(
         f"**I'm in {len(bot.guilds)} server(s):**\n{server_list}"
     )
+    await interaction.response.send_message("Done! Check the channel.", ephemeral=True)
 
 
 
