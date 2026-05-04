@@ -247,7 +247,7 @@ ROLE_NAME_MAP = {
     "Head of Lower Level":           "Head of Level",
     "Head of Middle Level":          "Head of Level",
     "Head of Upper Level":           "Head of Level",
-    "Head of SEN":                   "Head of Level"
+    "Head of SEN":                   "Head of Level",
     "Site Staff":                    "Site Staff",
     "Site Manager":                  "Site Manager",
     "Assistant Headteacher":         "Assistant Headteacher",
@@ -446,6 +446,7 @@ def get_nickname_for_sheet_role(teaching_name: str, sheet_role: str) -> str:
         "Headteacher":                 "[SLT]",
         "Deputy Headteacher":          "[SLT]",
         "Assistant Headteacher":       "[SLT]",
+        "Head of SEN":                 "| HOSEN",
         "Head of Upper Level":         "| HOUL",
         "Deputy Head of Upper Level":  "| DHOUL",
         "Head of Middle Level":        "| HOML",
