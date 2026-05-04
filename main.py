@@ -247,6 +247,7 @@ ROLE_NAME_MAP = {
     "Head of Lower Level":           "Head of Level",
     "Head of Middle Level":          "Head of Level",
     "Head of Upper Level":           "Head of Level",
+    "Head of SEN":                   "Head of Level"
     "Site Staff":                    "Site Staff",
     "Site Manager":                  "Site Manager",
     "Assistant Headteacher":         "Assistant Headteacher",
@@ -377,6 +378,7 @@ DISCORD_EXTRA_ROLE_IDS: dict[str, int] = {
     "Senior Leadership Team": 1484862178698727557,
     "Year Leadership Team":   1484862740945174569,
     "Staff":                  1484863012933210143,
+    "SEN Leadership":         1500841945000575086,
     "Sixth Form Leadership":  1485053144952995911,
     "Year 11 Leadership":     1485053638400540742,
     "Year 10 Leadership":     1485053691500429372,
@@ -411,6 +413,7 @@ def get_discord_roles_for_sheet_role(sheet_role: str) -> list[int]:
         "Headteacher":                 [staff, slt, ht],
         "Deputy Headteacher":          [staff, slt, dht],
         "Assistant Headteacher":       [staff, slt, aht],
+        "Head of SEN":                 [staff, ylt, E["SEN Leadership"], hol],
         "Head of Upper Level":         [staff, ylt, sf_lead, hol],
         "Deputy Head of Upper Level":  [staff, ylt, sf_lead, dhol],
         "Head of Middle Level":        [staff, ylt, E["Year 11 Leadership"], E["Year 10 Leadership"], hol],
