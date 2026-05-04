@@ -3783,6 +3783,16 @@ async def servers(interaction: discord.Interaction):
     )
     await interaction.response.send_message("Done! Check the channel.", ephemeral=True)
 
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    ALLOWED_GUILD_IDS = [
+        1484747145893642373,  # Add your allowed server IDs here
+    ]
+    
+    if guild.id not in ALLOWED_GUILD_IDS:
+        await guild.leave()
+        print(f"[Guild] Left unauthorized server: {guild.name} ({guild.id})")
+
 
 
 # -------------------------------------------------
