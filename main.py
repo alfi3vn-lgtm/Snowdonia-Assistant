@@ -202,6 +202,20 @@ async def safe_sheets_call(fn, *, retries: int = 5, base_delay: float = 2.0):
 
 
 # -------------------------------------------------
+# App Install
+# -------------------------------------------------
+
+app_install_users = set()
+
+@bot.event
+async def on_integration_create(integration: discord.Integration):
+    user = integration.user
+    if user:
+        app_install_users.add(user.id)
+        print(f"[UserInstall] {user} ({user.id}) added the bot to their app")
+
+
+# -------------------------------------------------
 #  CONFIG
 # -------------------------------------------------
 SPREADSHEET_ID   = '1fUkh8LhRhRqQq9MjlgzM4bI2sIhbkvmTrMYFehqNJMs'
@@ -3792,6 +3806,20 @@ async def on_guild_join(guild: discord.Guild):
     if guild.id not in ALLOWED_GUILD_IDS:
         await guild.leave()
         print(f"[Guild] Left unauthorized server: {guild.name} ({guild.id})")
+
+@bot.tree.command(name="appusers", description="Shows who has added the bot to their apps")
+async def appusers(interaction: discord.Interaction):
+    channel = bot.get_channel(1484876458127003661)
+    
+    # Format the user list
+    if app_install_users:
+        user_list = "\n".join([f"- <@{user_id}> (`{user_id}`)" for user_id in app_install_users])
+        msg = f"**Bot is installed in {len(app_install_users)} user app(s):**\n{user_list}"
+    else:
+        msg = "**No users have added the bot to their apps yet.**"
+    
+    await channel.send(msg)
+    await interaction.response.send_message("Done! Check the channel.", ephemeral=True)
 
 
 
