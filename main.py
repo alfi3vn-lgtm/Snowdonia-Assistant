@@ -201,18 +201,32 @@ async def safe_sheets_call(fn, *, retries: int = 5, base_delay: float = 2.0):
     raise RuntimeError("safe_sheets_call: all retries exhausted")
 
 
-# -------------------------------------------------
-# App Install
-# -------------------------------------------------
-
+# Near your other globals
 app_install_users = set()
 
-@bot.event
-async def on_integration_create(integration: discord.Integration):
-    user = integration.user
-    if user:
-        app_install_users.add(user.id)
-        print(f"[UserInstall] {user} ({user.id}) added the bot to their app")
+def is_user_install(interaction: discord.Interaction) -> bool:
+    """True when the command is being used via a user-installed app (not in a server)."""
+    return interaction.guild is None
+
+# Add this to any command you want to track user installs through
+@bot.tree.command(name="ping", description="Ping the bot")
+async def ping(interaction: discord.Interaction):
+    if is_user_install(interaction):
+        app_install_users.add(interaction.user.id)
+    await interaction.response.send_message("Pong!", ephemeral=True)
+
+@bot.tree.command(name="appusers", description="Shows who has added the bot to their apps")
+async def appusers(interaction: discord.Interaction):
+    channel = bot.get_channel(1484876458127003661)
+
+    if app_install_users:
+        user_list = "\n".join([f"- <@{uid}> (`{uid}`)" for uid in app_install_users])
+        msg = f"**Bot is installed in {len(app_install_users)} user app(s):**\n{user_list}"
+    else:
+        msg = "**No users have added the bot to their apps yet.**"
+
+    await channel.send(msg)
+    await interaction.response.send_message("Done! Check the channel.", ephemeral=True)
 
 
 # -------------------------------------------------
