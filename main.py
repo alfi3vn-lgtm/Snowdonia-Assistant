@@ -3271,51 +3271,84 @@ async def diagnose_roblox(interaction: discord.Interaction):
 import discord
 from discord.ext import commands
 
-TARGET_CHANNEL_ID = 1484889188267724941  # Replace with your channel ID
+TARGET_CHANNEL_ID = 1484889188267724941
+
+
+# Each entry is EITHER:
+# An image:  {"image": "https://..."}
+# A role:    {"title": "Headteacher", "name": "Miss P Mason", "roles": ["...", "..."]}
+
+entries = [
+    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431053757943829/image.png?ex=69ffaf75&is=69fe5df5&hm=162c108559802af735238a0ecf541807e87628e039111d2ae258b5fea46d8309&"},  # <-- replace with your image URL
+    {
+        "title": "Chief Education Officer",
+        "name": "Mrs Rosie Mayberry",
+        "roles": ["School Operations Oversight", "Development Oversight"]
+    },
+    {
+        "title": "Chief Operations Officer",
+        "name": "Mr Alfie Anderson",
+        "roles": ["School Operations Lead", "Human Resources", "Community Manager"]
+    },
+    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431280128725022/image.png?ex=69ffafab&is=69fe5e2b&hm=3141e0d00bc0d35453372cb69955d8f5e8f2179e0a67ce543dc3b1dc9d0fa6d4&"},  # <-- replace with your image URL
+    {
+        "title": "Headteacher",
+        "name": "Mr Matt Robbins",
+        "roles": ["Teaching & Learning", "Session Host", "Affiliate Liason"]
+    },
+    {
+        "title": "Deputy Headteacher",
+        "name": "Miss Alice Merolia",
+        "roles": ["Behaviour Lead", "SENCo Coordinator", "Support Lead"]
+    },
+    {
+        "title": "Deputy Headteacher",
+        "name": "Mrs Rebekkah Salvatore",
+        "roles": ["Year Leadership Coordinator", "Recruitment Lead", "Training (Strategic Oversight)"]
+    },
+    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431339775787018/image.png?ex=69ffafb9&is=69fe5e39&hm=e5e041e4ab6a94ec5a25e732cd503709ed45ec8127adafd7753b00d07b5ca158&"},  # <-- replace with your image URL
+    {
+        "title": "Assisstant Headteacher",
+        "name": "Miss Graci Norris",
+        "roles": ["Timetabling Lead", "Cover Manager (Academy)", "Junior Leadership Coordinator"]
+    },
+    {
+        "title": "Assisstant Headteacher",
+        "name": "Miss Amie Leclerc",
+        "roles": ["Marketing Lead", "Events Lead", "School Trips Lead"]
+    },
+
+    # --- END ---
+]
 
 
 @bot.command(name="sltlist")
-async def org_chart(ctx):
-    """Sends the org chart embed to the target channel."""
+async def slt_list(ctx):
     channel = bot.get_channel(TARGET_CHANNEL_ID)
 
     if channel is None:
         await ctx.send("❌ Could not find the target channel. Check `TARGET_CHANNEL_ID`.")
         return
 
-    # Each tuple: (Role Title, Name, [responsibilities])
-    roles = [
-        (
-            "Chief Education Officer",
-            "Mrs Rosie Mayberry",
-            ["School Operations Oversight", "Development Oversight"]
-        ),
-        (
-            "Chief Operations Officer",           # Role title — shown as the embed header
-            "Mr Alfie Anderson",                   # Person's name
-            ["School Operations Lead", "Human Resources Lead", "Community Manager"]  # Responsibilities
-        ),
-        # --- END OF BLOCK ---
-    ]
+    for entry in entries:
+        if "image" in entry:
+            embed = discord.Embed(color=0x2B2D31)
+            embed.set_image(url=entry["image"])
+            await channel.send(embed=embed)
+        else:
+            resp_lines = ""
+            for i, resp in enumerate(entry["roles"]):
+                prefix = "┗" if i == len(entry["roles"]) - 1 else "┣"
+                resp_lines += f"{prefix} {resp}\n"
+            embed = discord.Embed(
+                title=entry["title"],
+                description=f"**{entry['name']}**\n{resp_lines}",
+                color=0x2B2D31
+            )
+            await channel.send(embed=embed)
 
-    for title, name, responsibilities in roles:
-        # Build the responsibilities list with tree characters
-        resp_lines = ""
-        for i, resp in enumerate(responsibilities):
-            prefix = "┗" if i == len(responsibilities) - 1 else "┣"
-            resp_lines += f"{prefix} {resp}\n"
-
-        embed = discord.Embed(
-            title=title,                    # Large header text (e.g. "Headteacher")
-            description=f"**{name}**\n{resp_lines}",
-            color=0x2B2D31
-        )
-        await channel.send(embed=embed)
-
-    # Confirm to the user who ran the command (if sent elsewhere)
     if ctx.channel.id != TARGET_CHANNEL_ID:
-        await ctx.send(f"✅ Org chart sent to <#{TARGET_CHANNEL_ID}>.")
-
+        await ctx.send(f"✅ SLT list sent to <#{TARGET_CHANNEL_ID}>.")
 # ── /syncallstaff ──
 @bot.tree.command(name="syncallstaff", description="[ADMIN] Sync all staff Discord roles, nicknames and Roblox ranks from the sheet")
 @app_commands.describe(dry_run="If True, shows what would change without actually changing anything")
