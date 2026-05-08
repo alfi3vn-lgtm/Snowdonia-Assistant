@@ -3271,10 +3271,10 @@ async def diagnose_roblox(interaction: discord.Interaction):
 import discord
 from discord.ext import commands
 
-TARGET_CHANNEL_ID = 1484889188267724941  # Replace with your channel ID
+TARGET_CHANNEL_ID = 123456789012345678  # Replace with your channel ID
 
 
-@bot.command(name="sltlist")
+@bot.command(name="orgchart")
 async def org_chart(ctx):
     """Sends the org chart embed to the target channel."""
     channel = bot.get_channel(TARGET_CHANNEL_ID)
@@ -3283,40 +3283,38 @@ async def org_chart(ctx):
         await ctx.send("❌ Could not find the target channel. Check `TARGET_CHANNEL_ID`.")
         return
 
-    embed = discord.Embed(
-        color=0x2B2D31  # Dark Discord-style background colour
-    )
-
-    # Chief Education Officer section
-    embed.add_field(
-        name="Chief Education Officer",
-        value=(
-            "**Mrs Rosie Sinclair**\n"
-            "┣ Whole School Oversight\n"
-            "┗ Development Oversight"
+    # Each tuple: (Role Title, Name, [responsibilities])
+    roles = [
+        (
+            "Chief Education Officer",
+            "Mrs Rosie Mayberry",
+            ["School Operations Oversight", "Development Oversight"]
         ),
-        inline=False
-    )
-
-    # Chief Operations Officer Section
-    embed.add_field(
-        name="Chief Operations Officer",       # Change the emoji and title
-        value=(
-            "**Mr Alfie Anderson**\n"              # Change the name
-            "┣ Whole School Operations Lead\n"           # Change or add roles
-            "┣ Human Resources\n"           # Add as many ┣ lines as needed
-            "┗ Community Manager"           # Last role always uses ┗
+        (
+            "Chief Operations Officer",           # Role title — shown as the embed header
+            "Mr Alfie Anderson",                   # Person's name
+            ["School Operations Lead", "Human Resources Lead", "Community Manager"]  # Responsibilities
         ),
-        inline=False                        # Keep False to stack sections vertically
-    )
-    # --- END OF BLOCK ---
+        # --- END OF BLOCK ---
+    ]
 
-    await channel.send(embed=embed)
+    for title, name, responsibilities in roles:
+        # Build the responsibilities list with tree characters
+        resp_lines = ""
+        for i, resp in enumerate(responsibilities):
+            prefix = "┗" if i == len(responsibilities) - 1 else "┣"
+            resp_lines += f"{prefix} {resp}\n"
+
+        embed = discord.Embed(
+            title=title,                    # Large header text (e.g. "Headteacher")
+            description=f"**{name}**\n{resp_lines}",
+            color=0x2B2D31
+        )
+        await channel.send(embed=embed)
 
     # Confirm to the user who ran the command (if sent elsewhere)
     if ctx.channel.id != TARGET_CHANNEL_ID:
         await ctx.send(f"✅ Org chart sent to <#{TARGET_CHANNEL_ID}>.")
-
 
 # ── /syncallstaff ──
 @bot.tree.command(name="syncallstaff", description="[ADMIN] Sync all staff Discord roles, nicknames and Roblox ranks from the sheet")
