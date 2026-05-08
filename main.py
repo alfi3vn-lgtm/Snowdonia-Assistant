@@ -3271,10 +3271,10 @@ async def diagnose_roblox(interaction: discord.Interaction):
 import discord
 from discord.ext import commands
 
-TARGET_CHANNEL_ID = 123456789012345678  # Replace with your channel ID
+TARGET_CHANNEL_ID = 1484889188267724941  # Replace with your channel ID
 
 
-@bot.command(name="orgchart")
+@bot.command(name="sltlist")
 async def org_chart(ctx):
     """Sends the org chart embed to the target channel."""
     channel = bot.get_channel(TARGET_CHANNEL_ID)
