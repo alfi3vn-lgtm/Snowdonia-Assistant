@@ -43,6 +43,22 @@ load_dotenv()
 
 
 # -------------------------------------------------
+#  ALLOWED GUILD
+# -------------------------------------------------
+ALLOWED_GUILD_ID = 1484747145893642373
+
+
+async def _check_allowed_guild(interaction: discord.Interaction) -> bool:
+    """Returns True if the interaction is in the allowed guild, otherwise responds and returns False."""
+    if interaction.guild is None or interaction.guild.id != ALLOWED_GUILD_ID:
+        await interaction.response.send_message(
+            "❌ This command can only be used in the Winstree Academy server.", ephemeral=True
+        )
+        return False
+    return True
+
+
+# -------------------------------------------------
 #  RATE LIMITING
 # -------------------------------------------------
 _user_cooldowns: dict[int, dict[str, float]] = defaultdict(dict)
@@ -82,12 +98,24 @@ COMMAND_COOLDOWNS: dict[str, float] = {
 }
 
 def cooldown(command_name: str | None = None):
-    """Decorator — blocks reuse until cooldown expires."""
+    """Decorator — blocks reuse until cooldown expires, and restricts to the allowed guild."""
     def decorator(func):
         cmd_name = command_name
 
         @functools.wraps(func)
         async def wrapper(interaction: discord.Interaction, *args, **kwargs):
+            # Guild restriction
+            if interaction.guild is None or interaction.guild.id != ALLOWED_GUILD_ID:
+                try:
+                    await interaction.response.send_message(
+                        "❌ This command can only be used in the Winstree Academy server.", ephemeral=True
+                    )
+                except discord.InteractionResponded:
+                    await interaction.followup.send(
+                        "❌ This command can only be used in the Winstree Academy server.", ephemeral=True
+                    )
+                return
+
             name      = cmd_name or interaction.command.name
             limit     = COMMAND_COOLDOWNS.get(name, 5)
             user_id   = interaction.user.id
@@ -1521,6 +1549,7 @@ async def on_ready():
 async def on_guild_join(guild: discord.Guild):
     ALLOWED_GUILD_IDS = [
         1484747145893642373,
+        1503451106595049614,
     ]
     if guild.id not in ALLOWED_GUILD_IDS:
         await guild.leave()
@@ -1705,6 +1734,8 @@ async def set_status(interaction: discord.Interaction, status_text: str, status_
 # ── /servers ──
 @bot.tree.command(name="servers", description="Shows how many servers the bot is in")
 async def servers(interaction: discord.Interaction):
+    if not await _check_allowed_guild(interaction):
+        return
     channel     = bot.get_channel(1484876458127003661)
     server_list = "\n".join([f"- {guild.name}" for guild in bot.guilds])
     await channel.send(f"**I'm in {len(bot.guilds)} server(s):**\n{server_list}")
@@ -1714,6 +1745,8 @@ async def servers(interaction: discord.Interaction):
 # ── /appusers ──
 @bot.tree.command(name="appusers", description="Shows who has added the bot to their apps")
 async def appusers(interaction: discord.Interaction):
+    if not await _check_allowed_guild(interaction):
+        return
     channel = bot.get_channel(1484876458127003661)
     if app_install_users:
         user_list = "\n".join([f"- <@{uid}> (`{uid}`)" for uid in app_install_users])
@@ -3309,12 +3342,8 @@ from discord.ext import commands
 TARGET_CHANNEL_ID = 1484889188267724941
 
 
-# Each entry is EITHER:
-# An image:  {"image": "https://..."}
-# A role:    {"title": "Headteacher", "name": "Miss P Mason", "roles": ["...", "..."]}
-
 entries = [
-    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431053757943829/image.png?ex=69ffaf75&is=69fe5df5&hm=162c108559802af735238a0ecf541807e87628e039111d2ae258b5fea46d8309&"},  # <-- replace with your image URL
+    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431053757943829/image.png?ex=69ffaf75&is=69fe5df5&hm=162c108559802af735248a0ecf541807e87628e039111d2ae258b5fea46d8309&"},
     {
         "title": "Chief Education Officer",
         "name": "Mrs Rosie Mayberry",
@@ -3325,7 +3354,7 @@ entries = [
         "name": "Mr Alfie Anderson",
         "roles": ["School Operations Lead", "Human Resources", "Community Manager"]
     },
-    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431280128725022/image.png?ex=69ffafab&is=69fe5e2b&hm=3141e0d00bc0d35453372cb69955d8f5e8f2179e0a67ce543dc3b1dc9d0fa6d4&"},  # <-- replace with your image URL
+    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431280128725022/image.png?ex=69ffafab&is=69fe5e2b&hm=3141e0d00bc0d35453372cb69955d8f5e8f2179e0a67ce543dc3b1dc9d0fa6d4&"},
     {
         "title": "Headteacher",
         "name": "Mr Matt Robbins",
@@ -3341,7 +3370,7 @@ entries = [
         "name": "Mrs Rebekkah Salvatore",
         "roles": ["Year Leadership Coordinator", "Recruitment Lead", "Training (Strategic Oversight)"]
     },
-    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431339775787018/image.png?ex=69ffafb9&is=69fe5e39&hm=e5e041e4ab6a94ec5a25e732cd503709ed45ec8127adafd7753b00d07b5ca158&"},  # <-- replace with your image URL
+    {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431339775787018/image.png?ex=69ffafb9&is=69fe5e39&hm=e5e041e4ab6a94ec5a25e732cd503709ed45ec8127adafd7753b00d07b5ca158&"},
     {
         "title": "Assisstant Headteacher",
         "name": "Miss Graci Norris",
@@ -3352,8 +3381,6 @@ entries = [
         "name": "Miss Amie Leclerc",
         "roles": ["Marketing Lead", "Events Lead", "School Trips Lead"]
     },
-
-    # --- END ---
 ]
 
 
@@ -3384,6 +3411,8 @@ async def slt_list(ctx):
 
     if ctx.channel.id != TARGET_CHANNEL_ID:
         await ctx.send(f"✅ SLT list sent to <#{TARGET_CHANNEL_ID}>.")
+
+
 # ── /syncallstaff ──
 @bot.tree.command(name="syncallstaff", description="[ADMIN] Sync all staff Discord roles, nicknames and Roblox ranks from the sheet")
 @app_commands.describe(dry_run="If True, shows what would change without actually changing anything")
@@ -3712,6 +3741,8 @@ class StudentNameRequestView(discord.ui.View):
 @bot.tree.command(name="requestdisplayname", description="Request a change to your student display name")
 @app_commands.describe(new_name="The name you would like to be displayed as")
 async def request_display_name(interaction: discord.Interaction, new_name: str):
+    if not await _check_allowed_guild(interaction):
+        return
     if len(new_name) > 32:
         return await interaction.response.send_message("❌ Names must be under 32 characters.", ephemeral=True)
 
@@ -3798,6 +3829,8 @@ class CustomRoleView(discord.ui.View):
 @bot.tree.command(name="customrolerequest", description="Request a custom role with a specific name and color")
 @app_commands.describe(name="The name of the role", color="The Hex color code (e.g. #ff0000 or ff0000)")
 async def customrolerequest(interaction: discord.Interaction, name: str, color: str = None):
+    if not await _check_allowed_guild(interaction):
+        return
     log_channel = bot.get_channel(ROLE_REQUEST_CHANNEL_ID)
     if not log_channel:
         return await interaction.response.send_message("Log channel not found.", ephemeral=True)
