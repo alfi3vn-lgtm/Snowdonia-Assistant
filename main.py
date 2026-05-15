@@ -3373,12 +3373,12 @@ entries = [
     {"image": "https://cdn.discordapp.com/attachments/1459678078400725115/1502431339775787018/image.png?ex=69ffafb9&is=69fe5e39&hm=e5e041e4ab6a94ec5a25e732cd503709ed45ec8127adafd7753b00d07b5ca158&"},
     {
         "title": "Assisstant Headteacher",
-        "name": "Miss Graci Norris",
-        "roles": ["Timetabling Lead", "Cover Manager (Academy)", "Junior Leadership Coordinator"]
+        "name": "Miss Fav Haws",
+        "roles": ["Support Hubs Lead", "Cover Manager (Sixth Form)", "Training (delivery focus)"]
     },
     {
         "title": "Assisstant Headteacher",
-        "name": "Miss Amie Leclerc",
+        "name": "Miss Macey Elara",
         "roles": ["Marketing Lead", "Events Lead", "School Trips Lead"]
     },
 ]
